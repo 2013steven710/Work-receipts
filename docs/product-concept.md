@@ -1,6 +1,6 @@
 # Work Receipts: Product Concept
 
-_Draft v4, 27 Sep 2026. Ideas only; nothing is built yet._
+_Draft v5, 27 Sep 2026. Ideas only; nothing is built yet._
 
 This document records the decisions made after the [market research](market-research.md). Where the two disagree, this document wins. In particular, the research suggested a background screenshot watcher, which we have dropped.
 
@@ -13,6 +13,9 @@ Open the app, snap the receipt, tap a category. The receipt lands in your claim 
 | Topic | Decision |
 |---|---|
 | Market | **Global product.** Each company gets its own workspace with its own country, home currency, tax rules and holiday calendar. |
+| Launch countries | **Australia, United States, United Kingdom** |
+| Language | **English only** for v1. Dates, numbers and currency follow each company's country. |
+| Billing | **Not part of the app** for v1. There is no subscription or payment handling inside the app. |
 | Platforms | **iPhone and Android** apps for employees, plus a **web portal** for finance and admins. |
 | Capture | **In-app camera**, plus "Pick from Photos". No background screenshot watching. |
 | Claim forms | The company's own **Excel** forms, filled in by the app, as **two separate forms**: *Personal card (reimbursement)* and *Company card (reconciliation)*. A Google Sheet is also acceptable. |
@@ -21,11 +24,11 @@ Open the app, snap the receipt, tap a category. The receipt lands in your claim 
 | Connectivity | Works **online and offline**. Offline, receipts are saved now and synced later. |
 | Company size | Aimed at companies of about **50–100 employees** |
 | Company platform | **Microsoft 365** first (sign-in, SharePoint, Excel, Outlook). Google Workspace later. |
-| Approval | One email, **To: manager, Cc: finance.** The **manager approves**, then **finance pays by bank transfer outside the app**. |
+| Approval | One email, **To: manager, Cc: finance.** The **manager approves both forms** (personal and company card), then **finance pays by bank transfer outside the app**. |
 | Cards | **Personal cards (reimbursed)** and **company cards (every statement line must match a receipt)** |
 | Card statements | **CSV download from any bank.** The format differs by bank, so the app learns each bank's layout. |
 | Cost centre / project | **Not required.** Optional field, off by default. |
-| Retention | **6 months** by default. **The app owner can change this and can delete any receipt at any time.** The finance manager sees everyone's claims. |
+| Retention | **6 months** by default. **The app owner (you, the platform owner) can change this and can delete any receipt at any time.** The finance manager sees everyone's claims. |
 | Reminder | Sent on the **3rd business day of the new month** if last month's claim hasn't been submitted. |
 
 ## 1. Capture: in-app camera only
@@ -51,7 +54,8 @@ Why this is better:
 
 | Role | What they do |
 |---|---|
-| **App owner** (the company's workspace owner) | Signs the company up and controls billing, security and **retention**. **Can delete any receipt or claim at any time.** Appoints finance admins. |
+| **App owner** (you: the platform owner, across *all* companies) | Uses a **super-admin console** to see every company workspace. Sets the **default retention**. **Can delete any receipt or claim in any company at any time.** Can suspend a workspace and manage the tax packs and app-wide settings. |
+| **Company admin** (each company's workspace owner) | Signs the company up and connects its Microsoft 365. Appoints finance users. Can set a company retention period within the limits the app owner allows. |
 | **Finance** (finance manager / admin) | Sets up the claim forms, categories and rules. Uploads card statements. **Sees every employee's claims.** Marks claims as paid. |
 | **Manager** | Receives their team's claims by email and approves or rejects them. |
 | **Employee** | Snaps receipts, taps categories and submits claims at month-end. |
@@ -108,7 +112,19 @@ Row | Date     | Supplier   | … | Category   | Statement amt AUD | Matched sta
 - For personal cards, the employee can override the converted amount with the amount their bank actually charged.
 - **Tax rules come from the company's country**, one rule pack per country, starting with Australia:
   - **Australia:** GST extracted separately. Purchases over $82.50 including GST need the supplier's **ABN** on the invoice, and the app warns if one is missing. Entertainment categories are flagged for **FBT** review.
-  - **Later packs:** NZ (GST), UK and EU (VAT number and VAT amount), Singapore (GST), US (sales tax, usually not reclaimable), and others.
+  - **United States:**
+    - Currency USD, dates MM/DD/YYYY.
+    - **Sales tax** is recorded but usually not reclaimable, so there's no tax-number check.
+    - **IRS receipt rule:** a receipt is needed for **lodging of any amount** and for **other expenses of $75 or more**. Below $75, the employee can enter a short note instead. The app warns when a receipt is required.
+    - **Business meals:** the app asks for the **business purpose and attendees**, which the IRS expects as substantiation.
+    - **Accountable plan timing:** claims are expected within about **60 days** of the expense. The app flags receipts older than 60 days.
+  - **United Kingdom:**
+    - Currency GBP, dates DD/MM/YYYY.
+    - **VAT** is extracted separately, along with the supplier's **VAT registration number** (GB + 9 digits).
+    - **VAT invoice check:** up to **£250** a simplified VAT receipt is fine. Above £250 a **full VAT invoice** is needed to reclaim VAT, and the app warns if the receipt looks like a simplified one.
+    - **Client entertainment:** VAT is generally **not reclaimable**, so the app sets the reclaimable VAT to zero for that category. Staff entertainment is handled differently.
+  - **Later packs:** NZ, EU countries, Singapore, and others.
+  - ⚠️ Every tax pack must be **reviewed by a local accountant before launch**. These rules are a design starting point, not tax advice.
 - Foreign purchases default to no local tax.
 
 ## 6. Company card statements (any bank, CSV)
@@ -140,7 +156,8 @@ Claim pack: Personal claim .xlsx + PDF  and/or  Company card reconciliation .xls
    ▼
 ONE email from the employee's Outlook ─▶ To: manager · Cc: finance
    Subject: "Expense claim – Jane Smith – Sep 2026 – $421.41 to reimburse"
-   Body: totals by category for each form + [Approve] [Reject with comment]
+   Body: totals by category for each form + [Approve all] [Reject with comment]
+   (the manager approves the personal claim AND the company card reconciliation)
    ▼
 Manager approves ─▶ status "Approved" ─▶ finance pays by bank transfer (outside the app)
         │ reject                              ─▶ finance clicks "Mark paid" (optional, so the employee can see it)
@@ -148,7 +165,9 @@ Manager approves ─▶ status "Approved" ─▶ finance pays by bank transfer (
 Employee gets the comment ─▶ fixes rows ─▶ resubmits (version 2, same email thread)
 ```
 
-- **Statuses:** Draft → Submitted → Approved → Paid, or Rejected.
+- **Statuses:** Draft → Submitted → Approved → Paid, or Rejected. **Both forms need the manager's approval.**
+  - A rejection can name one form (for example "company card row 4 has no receipt"). Only that form goes back to the employee, and the other stays approved.
+  - A company-card form has nothing to reimburse, so its final status is "Approved" rather than "Paid".
 - After submitting, the claim is **locked**. Any change creates a new version.
 - Each employee's manager is read from their **Microsoft 365 profile**, so nobody has to pick an approver.
 - If the email buttons are blocked by the company's email security, the manager can approve in the app instead.
@@ -184,12 +203,16 @@ Employee gets the comment ─▶ fixes rows ─▶ resubmits (version 2, same em
 ## 11. Retention and deletion
 
 - **Default:** receipts and claims stay in the app for **6 months**, and then they're removed.
-- **The app owner decides:**
-  - They can change the retention period for the company, shorter or longer.
-  - They can **delete any receipt or claim at any time.**
+- **The app owner (you) decides:**
+  - You set the **default retention** for every company, and the range a company admin may choose within.
+  - You can **delete any receipt or claim in any company at any time**, from the super-admin console.
   - Every deletion is recorded in the audit trail (what was deleted, when and by whom), but the image itself is gone.
 - **Employees** can delete their own receipts while they're still in a draft claim. After a claim is submitted, only the app owner can delete it.
-- **A local-law reminder is shown when changing retention:** many countries require businesses to keep expense records much longer. For example, Australia's ATO generally requires 5 years. The app shows this warning, but **the owner makes the call**.
+- ⚠️ **Trust and legal point.** Receipts are stored in each *company's* SharePoint, so a vendor deleting a customer's records is sensitive. This matters especially under **UK GDPR** and US customer contracts. Recommendations:
+  - State this deletion right clearly in the **terms of service** each company accepts at sign-up.
+  - **Notify the company admin** whenever you delete something.
+  - The company's Microsoft 365 approval must include **delete permission on the Expense Claims library**. The narrow `Sites.Selected` permission is enough, so the app never needs access to the rest of their SharePoint.
+- **A local-law reminder is shown when changing retention:** many countries require businesses to keep expense records much longer. For example: **Australia** (ATO) generally 5 years, **UK** (HMRC, companies) 6 years, **US** (IRS) generally 3 years and sometimes longer. The app shows this warning, but **the owner makes the call**.
   - Recommended: keep approved claim packs in the company's SharePoint archive under its normal Microsoft 365 retention policy.
 
 ## 12. Other features we're keeping
@@ -203,6 +226,7 @@ Employee gets the comment ─▶ fixes rows ─▶ resubmits (version 2, same em
 - A 50–100 employee company at about 10–30 receipts per person works out to roughly **1,000–3,000 receipts a month**.
 - The AI read costs cents or less per receipt, and hosting is small.
 - The main work is the Microsoft 365 integration, the approval emails, the bank CSV learning and the per-country tax packs.
+- **Data location:** the app's own server stores only setup data, statuses and the audit trail. It can be hosted per region (AU, US, UK/EU) for customers who ask where their data lives.
 - **Distribution:** as a global product, the app will be listed publicly on the **App Store and Google Play**. Companies can also push it to staff phones through **Intune**.
 
 ## Screen map
@@ -225,14 +249,15 @@ Manager (email, or the phone app)
 Finance (web portal)
   All claims · Card statements (CSV upload, bank profiles, matching) · Reports · Company setup · Audit trail
 
-App owner (web portal)
-  Everything finance has + billing · retention period · delete any receipt/claim · roles
+Company admin (web portal)
+  Everything finance has + Microsoft 365 connection · roles · company retention (within allowed range)
+
+App owner – you (super-admin console)
+  All companies · default retention · delete any receipt/claim anywhere · suspend workspace · tax packs (AU/US/UK) · audit trail across companies
 ```
 
 ## Open questions
 
-1. **App owner:** is this the company that subscribes (its workspace owner, as assumed above), or you, as the owner of the whole product? If it's you, do you also need a **super-admin console** across all companies?
-2. **Company-card approval:** should the manager approve the *company card* form too, or only the personal claim?
-3. **Business model:** will companies pay per employee per month, a flat fee per company, or will it be free for the first company?
-4. **Next country after Australia:** which tax pack should come second?
-5. **Languages:** is English-only fine for v1?
+1. **Receipt images outside Microsoft 365:** should companies without SharePoint be able to use the app, with receipt images stored on the app's own servers? That would make it easier to adopt, but it means holding customer data ourselves.
+2. **Company sign-up:** can any company sign up by itself, or do you approve each company before it can use the app?
+3. **Mileage claims:** out of scope for v1, or wanted? The UK HMRC rates of 45p/25p per mile and the US IRS standard rate are common requests.
