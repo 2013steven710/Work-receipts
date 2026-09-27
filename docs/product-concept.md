@@ -1,18 +1,19 @@
 # Work Receipts: Product Concept
 
-_Draft v5, 27 Sep 2026. Ideas only; nothing is built yet._
+_Draft v6, 27 Sep 2026. Ideas only; nothing is built yet._
 
 This document records the decisions made after the [market research](market-research.md). Where the two disagree, this document wins. In particular, the research suggested a background screenshot watcher, which we have dropped.
 
 ## One-line pitch
 
-Open the app, snap the receipt, tap a category. The receipt lands in your claim form, and month-end is one button that emails a finished claim to your manager and finance. It's built for companies anywhere in the world, with their own forms, currencies, tax rules and banks.
+Open the app, snap the receipt, tap a category. The receipt lands in your claim form, and month-end is one button that emails a finished claim to your manager and finance. It's built for companies and individuals anywhere in the world, with their own forms, currencies, tax rules, banks and choice of where receipts are stored.
 
 ## Decisions so far
 
 | Topic | Decision |
 |---|---|
-| Market | **Global product.** Each company gets its own workspace with its own country, home currency, tax rules and holiday calendar. |
+| Market | **Global product** for **companies and individuals.** Anyone can sign up, with no approval step. |
+| Country | **Sign-up asks "Which country does this profile/company belong to?"** The answer sets the tax rules, home currency, date format, holidays, mileage rates and retention reminder. |
 | Launch countries | **Australia, United States, United Kingdom** |
 | Language | **English only** for v1. Dates, numbers and currency follow each company's country. |
 | Billing | **Not part of the app** for v1. There is no subscription or payment handling inside the app. |
@@ -22,14 +23,39 @@ Open the app, snap the receipt, tap a category. The receipt lands in your claim 
 | Claim layout | **One row per receipt**, with **totals per category at the bottom** |
 | Currency | **Multi-currency.** The home currency is set per company (AUD for the first company). |
 | Connectivity | Works **online and offline**. Offline, receipts are saved now and synced later. |
-| Company size | Aimed at companies of about **50–100 employees** |
-| Company platform | **Microsoft 365** first (sign-in, SharePoint, Excel, Outlook). Google Workspace later. |
+| Who uses it | **Individuals** (one person claiming from their employer) and **companies** (sized for about **50–100 employees**) |
+| Sign-in | **Microsoft, Google, Apple or email.** |
+| Image storage | **Optional; the user chooses:** app cloud (default), Microsoft 365 (OneDrive/SharePoint), Google Drive, or phone only. |
+| Mileage | **Included in v1**, in a simple form: trip entry and route distance. **No live GPS tracking.** |
 | Approval | One email, **To: manager, Cc: finance.** The **manager approves both forms** (personal and company card), then **finance pays by bank transfer outside the app**. |
 | Cards | **Personal cards (reimbursed)** and **company cards (every statement line must match a receipt)** |
 | Card statements | **CSV download from any bank.** The format differs by bank, so the app learns each bank's layout. |
 | Cost centre / project | **Not required.** Optional field, off by default. |
-| Retention | **6 months** by default. **The app owner (you, the platform owner) can change this and can delete any receipt at any time.** The finance manager sees everyone's claims. |
+| Retention | **6 months** by default. **The app owner (you, the platform owner) can change this and can delete any receipt at any time**, in app cloud storage directly and in customer storage where permission was given. The finance manager sees everyone's claims. |
 | Reminder | Sent on the **3rd business day of the new month** if last month's claim hasn't been submitted. |
+
+## 0. Sign-up and first questions
+
+Anyone can download the app and sign up, with no approval step. Sign-in is with **Microsoft, Google, Apple or email**. Apple requires "Sign in with Apple" to be offered whenever other social sign-ins are. The email address is verified.
+
+The first screens ask three questions, one per screen, with big buttons:
+
+1. **"Is this for a company or for yourself?"**
+   - *Company:* creates a company workspace, and you become its company admin.
+   - *Myself:* creates a personal profile, with no admin screens.
+   - *Joining my company:* if your email domain (for example `@acme.com`) matches an existing company, or you have an invite, you join that company.
+2. **"Which country does this profile/company belong to?"** This answer is required. It sets:
+   - the **tax pack**: AU, US or UK rules. Any other country gets a **generic mode** that records tax amounts without country rules,
+   - the **home currency** (AUD, USD, GBP, …),
+   - the **date and number format** (27/09/2026 or 09/27/2026),
+   - the **public-holiday calendar**, used for the 3rd-business-day reminder,
+   - the **mileage rates**,
+   - the **record-keeping reminder** (5 / 3 / 6 years).
+
+   The country can be changed later in settings, with a warning because it affects tax rules. Claims already submitted keep the rules they were made with.
+3. **"Where should we keep your receipt images?"** See section 14. The default is the app's cloud, so you can **skip this and start snapping immediately**.
+
+**Profiles:** one person can have more than one profile. For example, a personal profile in Australia plus membership of a UK company. Each profile has its own country, categories and forms. Switching between them is one tap at the top of the camera screen.
 
 ## 1. Capture: in-app camera only
 
@@ -55,10 +81,11 @@ Why this is better:
 | Role | What they do |
 |---|---|
 | **App owner** (you: the platform owner, across *all* companies) | Uses a **super-admin console** to see every company workspace. Sets the **default retention**. **Can delete any receipt or claim in any company at any time.** Can suspend a workspace and manage the tax packs and app-wide settings. |
-| **Company admin** (each company's workspace owner) | Signs the company up and connects its Microsoft 365. Appoints finance users. Can set a company retention period within the limits the app owner allows. |
+| **Company admin** (each company's workspace owner) | Signs the company up, chooses where its receipt images are stored and connects Microsoft 365 or Google if needed. Appoints finance users. Can set a company retention period within the limits the app owner allows. |
 | **Finance** (finance manager / admin) | Sets up the claim forms, categories and rules. Uploads card statements. **Sees every employee's claims.** Marks claims as paid. |
 | **Manager** | Receives their team's claims by email and approves or rejects them. |
 | **Employee** | Snaps receipts, taps categories and submits claims at month-end. |
+| **Individual** | Plays every role for themselves: sets up their own form and categories, and emails claims to whoever approves them (see section 15). |
 
 ## 3. Company setup (finance, done once)
 
@@ -208,10 +235,15 @@ Employee gets the comment ─▶ fixes rows ─▶ resubmits (version 2, same em
   - You can **delete any receipt or claim in any company at any time**, from the super-admin console.
   - Every deletion is recorded in the audit trail (what was deleted, when and by whom), but the image itself is gone.
 - **Employees** can delete their own receipts while they're still in a draft claim. After a claim is submitted, only the app owner can delete it.
-- ⚠️ **Trust and legal point.** Receipts are stored in each *company's* SharePoint, so a vendor deleting a customer's records is sensitive. This matters especially under **UK GDPR** and US customer contracts. Recommendations:
+- **How deletion works depends on where the images are stored** (section 14):
+  - **App cloud:** you can delete directly.
+  - **Microsoft 365 / Google Drive:** the app deletes using the permission the customer granted.
+  - **Phone only:** the image is deleted on the phone at its next sync.
+- ⚠️ **Trust and legal point.** A vendor deleting a customer's records is sensitive. This matters especially under **UK GDPR** and US customer contracts. Recommendations:
   - State this deletion right clearly in the **terms of service** each company accepts at sign-up.
   - **Notify the company admin** whenever you delete something.
-  - The company's Microsoft 365 approval must include **delete permission on the Expense Claims library**. The narrow `Sites.Selected` permission is enough, so the app never needs access to the rest of their SharePoint.
+  - For Microsoft 365 storage, the approval must include **delete permission on the Expense Claims library**. The narrow `Sites.Selected` permission is enough. For Google Drive, the narrow `drive.file` permission covers files the app created.
+  - For images in the **app cloud**, the app is holding customer data itself. It needs a **privacy policy**, encryption, **regional hosting** (AU / US / UK-EU) and a data-deletion-on-request process, as UK GDPR requires.
 - **A local-law reminder is shown when changing retention:** many countries require businesses to keep expense records much longer. For example: **Australia** (ATO) generally 5 years, **UK** (HMRC, companies) 6 years, **US** (IRS) generally 3 years and sometimes longer. The app shows this warning, but **the owner makes the call**.
   - Recommended: keep approved claim packs in the company's SharePoint archive under its normal Microsoft 365 retention policy.
 
@@ -219,20 +251,75 @@ Employee gets the comment ─▶ fixes rows ─▶ resubmits (version 2, same em
 
 - **Duplicate detection:** catches the same receipt photographed twice, or an e-receipt that was also photographed. It matches on merchant, amount, date and image similarity.
 - **E-receipts from email:** watches an Outlook folder, or accepts forwarded emails. E-receipts land in the **inbox inside the app** for a one-tap category.
-- **Privacy:** receipt images and claim forms live in **the company's own Microsoft 365** (SharePoint). The app's server stores only company setup, bank profiles, claim statuses and the audit trail, not receipt images. Employees see only their own folder.
+- **Privacy:** receipt images and claim forms live **wherever the user or company chose** (section 14). Employees see only their own receipts.
 
 ## 13. Scale and running cost (rough)
 
 - A 50–100 employee company at about 10–30 receipts per person works out to roughly **1,000–3,000 receipts a month**.
 - The AI read costs cents or less per receipt, and hosting is small.
 - The main work is the Microsoft 365 integration, the approval emails, the bank CSV learning and the per-country tax packs.
-- **Data location:** the app's own server stores only setup data, statuses and the audit trail. It can be hosted per region (AU, US, UK/EU) for customers who ask where their data lives.
+- **Data location:** hosted per region (AU, US, UK/EU). This matters most for users who keep images in the app cloud.
+- **Open sign-up and AI cost:** because anyone can sign up, each account gets a **fair-use limit** on AI receipt reads, for example a monthly cap with a friendly message. That protects the running cost while billing is out of scope.
 - **Distribution:** as a global product, the app will be listed publicly on the **App Store and Google Play**. Companies can also push it to staff phones through **Intune**.
+
+## 14. Where receipt images are stored (optional, user's choice)
+
+Chosen at sign-up, or skipped to use the default. It can be changed later in settings.
+
+| Option | Good for | Notes |
+|---|---|---|
+| **App cloud** (default) | Individuals and anyone who wants zero setup | Works immediately. Encrypted and hosted in the user's region. The app holds the data, so the privacy policy applies. |
+| **Microsoft 365** (OneDrive / SharePoint) | Companies on Microsoft 365 | Images and Excel forms live in the customer's own tenant. IT approves the app once. |
+| **Google Drive** | Companies on Google Workspace, and individuals with Gmail | Uses the Google file picker and the narrow `drive.file` permission. |
+| **Phone only** | Privacy-minded individuals | Nothing leaves the phone except the claim email itself. ⚠️ If the phone is lost, the receipts are lost too. The app says so clearly. |
+
+- For a company, the **company admin chooses once** and everyone follows it. Individuals choose for themselves.
+- **Switching later:** the app moves existing images to the new place in the background.
+- Whatever is chosen, **claim forms and PDFs are generated the same way**. Only the storage location differs.
+- **Offline capture works with every option**, because images are queued on the phone first.
+
+## 15. Individual mode
+
+For someone using the app for themselves, for example because their employer doesn't use it:
+
+- **Setup, about 2 minutes:**
+  1. Country (required).
+  2. Categories: typed in, synced from a sheet, or read from a photo of the employer's claim form.
+  3. Optional: upload the employer's Excel claim form, so claims come out in exactly that format.
+- **Approvers are typed-in email addresses:** "Send claims to" the manager, "Cc" finance. Approvers **don't need an account**. The email's Approve / Reject buttons open a secure one-time link.
+- **Company card:** individuals can upload their own card-statement CSV and get the same matching.
+- **The same month-end button, the same 3rd-business-day reminder and the same mileage feature** as company users.
+- **Joining a company later:** if the employer starts using the app, the individual can join the company workspace and **bring their history with them**.
+
+## 16. Mileage claims (v1, simple version)
+
+**Complexity: low to medium, as long as there is no live GPS tracking.** Tracking trips in the background with GPS is the hard, battery-hungry part, so it's out of v1, which is consistent with our "no background activity" decision.
+
+**How it works:**
+- Tap **"+ Trip"** on the camera screen.
+- Enter **From**, **To**, date and purpose.
+  - Tick "return trip" to double it.
+  - "Add stop" handles multi-stop trips.
+  - Frequent places such as Office, Home or Client X can be saved.
+- The distance is calculated with a **maps route service**. It can be edited, or entered as odometer start and end readings instead.
+- **Amount = distance × the rate for the profile's country**, from a rate table that you, the app owner, update each year:
+  - **UK (HMRC):** a per-mile rate for the first 10,000 business miles in the tax year, and a lower rate after that. The app tracks the running total for the tax year, which starts on 6 April, and switches automatically.
+  - **US (IRS):** the standard mileage rate for that year.
+  - **Australia (ATO):** the cents-per-km rate for that year, with the annual cap on claimable km.
+  - A company can override the rate with its own reimbursement rate.
+- **The trip becomes a row** in the personal claim form with the category "Mileage". There's no receipt; a **route map image** in the receipts PDF serves as the evidence.
+- It's included in the manager's approval like any other row.
+
+**Later:** automatic trip detection with GPS, vehicle types (motorbike, bicycle), and passenger allowances.
 
 ## Screen map
 
 ```
-Employee (phone app)
+Sign-up (first run)
+  Sign in (Microsoft / Google / Apple / email) ─▶ Company or Myself? ─▶ Which country? ─▶ Where to store images? (skip = app cloud)
+
+Employee / Individual (phone app)
+  [Profile switcher]  Camera  · [+ Trip]
   Camera ─snap─▶ [Personal | Company card] + category buttons (AI suggestion highlighted)
      │                 │ tap
      │                 ▼
@@ -250,14 +337,16 @@ Finance (web portal)
   All claims · Card statements (CSV upload, bank profiles, matching) · Reports · Company setup · Audit trail
 
 Company admin (web portal)
-  Everything finance has + Microsoft 365 connection · roles · company retention (within allowed range)
+  Everything finance has + storage choice (app cloud / Microsoft 365 / Google Drive) · roles · company retention (within allowed range)
 
 App owner – you (super-admin console)
-  All companies · default retention · delete any receipt/claim anywhere · suspend workspace · tax packs (AU/US/UK) · audit trail across companies
+  All companies and individuals · mileage rate tables · fair-use limits · default retention · delete any receipt/claim anywhere · suspend workspace · tax packs (AU/US/UK) · audit trail across companies
 ```
 
 ## Open questions
 
-1. **Receipt images outside Microsoft 365:** should companies without SharePoint be able to use the app, with receipt images stored on the app's own servers? That would make it easier to adopt, but it means holding customer data ourselves.
-2. **Company sign-up:** can any company sign up by itself, or do you approve each company before it can use the app?
-3. **Mileage claims:** out of scope for v1, or wanted? The UK HMRC rates of 45p/25p per mile and the US IRS standard rate are common requests.
+None blocking. The concept is ready to turn into a build plan. Things to settle during build planning:
+
+1. **Name and branding** for the app.
+2. **Fair-use limits:** how many AI receipt reads per month per account are free before a message appears.
+3. **Which accountant(s)** will review the AU, US and UK tax packs and mileage rates before launch.
