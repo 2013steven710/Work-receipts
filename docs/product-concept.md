@@ -1,6 +1,18 @@
-# Work Receipts: Product Concept
+# ClaimTidy: Product Concept
 
-_Draft v9, 27 Sep 2026. Ideas only; nothing is built yet. v7 to v9 apply the independent plan review (see "Changes from review" at the end)._
+_Draft v12, 27 Sep 2026. The product is named **ClaimTidy** (claimtidy.com); v12 adds the name and the paid-countries rule._
+
+> **Status (27 Sep 2026):** the concept is **confirmed** and ready to build from.
+> - **Reviewed:** Codex independently approved the product design (v9). Codex also reviewed the pricing, platform and paid-country rules (v10–v12) as part of the build-plan review.
+> - **Pending:** the billing mechanics (how Stripe charges, retries and checks countries) are to be **proven by testing in Stripe's test mode** before billing is built. They get a final focused review then.
+> - **Build decisions:**
+>   - Release 1 is individuals only, as an installable web app.
+>   - No mileage and no Sign in with Apple in Release 1.
+>   - Paid plans are sold in Australia and the US at launch.
+>
+> The build order is in [build-plan.md](build-plan.md). Nothing is built yet.
+
+_History: v7 to v9 apply the independent plan review (see "Changes from review" at the end). v10 added pricing. v11 makes the first release an installable web app, adds receipt-based pricing tiers, and moves mileage to a later release. The build order is in [build-plan.md](build-plan.md)._
 
 This document records the decisions made after the [market research](market-research.md). Where the two disagree, this document wins. In particular, the research suggested a background screenshot watcher, which we have dropped.
 
@@ -16,17 +28,17 @@ Open the app, snap the receipt, tap a category. The receipt lands in your claim 
 | Country | **Sign-up asks "Which country does this profile/company belong to?"** The answer sets the tax rules, home currency, date format, holidays, mileage rates and retention reminder. |
 | Launch countries | **Australia, United States, United Kingdom** |
 | Language | **English only** for v1. Dates, numbers and currency follow each company's country. |
-| Billing | **Not part of the app** for v1. There is no subscription or payment handling inside the app. |
-| Platforms | **iPhone and Android** apps for employees, plus a **web portal** for finance and admins. |
+| Pricing | **3 months free, then $5 AUD per person per month** (section 17). Companies pay only for staff who submitted a claim that month. Individuals subscribe in the iPhone/Android app, and companies pay by card in the web portal. Finance still pays employees' expenses outside the app. |
+| Platforms | **First release: an installable web app** for phones: iPhone (Safari) and Android (Chrome), added to the home screen, with no app store. It includes the web pages for approvers and the app owner, and later the finance and admin portal. **Native App Store and Google Play apps come in a later release.** |
 | Capture | **In-app camera**, plus "Pick from Photos". No background screenshot watching. |
 | Claim forms | The company's own **Excel** forms, filled in by the app, as **two separate forms**: *Personal card (reimbursement)* and *Company card (reconciliation)*. A Google Sheet is also acceptable. |
 | Claim layout | **One row per receipt**, with **totals per category at the bottom** |
 | Currency | **Multi-currency.** The home currency is set per company (AUD for the first company). |
 | Connectivity | Works **online and offline**. Offline, receipts are saved now and synced later. |
 | Who uses it | **Individuals** (one person claiming from their employer) and **companies** (sized for about **50–100 employees**) |
-| Sign-in | **Microsoft, Google, Apple or email.** Every workflow works without Microsoft 365. Microsoft 365 single sign-on, Outlook sending and manager lookup are **optional integrations** for companies that use it. |
+| Sign-in | **Microsoft, Google, Apple or email.** The first release (the web app) offers Microsoft, Google and email; Apple comes with the native apps. Every workflow works without Microsoft 365. Microsoft 365 single sign-on, Outlook sending and manager lookup are **optional integrations** for companies that use it. |
 | Image storage | **Optional; the user chooses:** app cloud (default), Microsoft 365 (OneDrive/SharePoint), Google Drive, or phone only. **Phone only** means images and forms are never *stored* off the phone. The AI read and route lookup still process data briefly, which is disclosed up front (section 14). |
-| Mileage | **Included in v1**, in a simple form: trip entry and route distance. **No live GPS tracking.** |
+| Mileage | **Planned for a later release** (not the first release), in a simple form: trip entry and route distance. **No live GPS tracking.** |
 | Approval | One email, **To: manager, Cc: finance**, **sent by the app** from its own address with Reply-To set to the employee (Outlook sending is optional for Microsoft 365 companies). The **manager approves both forms** (personal and company card), then **finance pays by bank transfer outside the app**. |
 | Cards | **Personal cards (reimbursed)** and **company cards (every purchase line on the statement must be matched to a receipt or an approved explanation)** |
 | Card statements | **CSV download from any bank.** The format differs by bank, so the app learns each bank's layout. **The company-card reconciliation covers one statement period per card**, not a calendar month. |
@@ -79,7 +91,10 @@ The first screens ask three questions, one per screen, with big buttons:
 Why this is better:
 - No battery drain and no permission to read your whole photo library.
 - It works the same on iPhone and Android.
-- It's easier to get through App Store review.
+- It's easier to get through App Store review, once native apps follow.
+- **In the first release (the web app),** the snap button opens the phone's own camera. Automatic edge detection is best-effort, and the user can drag the corners to adjust the crop.
+  - "Pick from Photos" also accepts PDF e-receipts.
+  - On Android, receipts can also be shared into the installed app from other apps. iPhone web apps can't receive shares, so iPhone users pick the file instead.
 
 ## 2. Roles
 
@@ -317,8 +332,10 @@ Employee gets the comment ─▶ fixes rows ─▶ resubmits (version 2, same em
 - The AI read costs cents or less per receipt, and hosting is small.
 - The main work is the approval emails, the optional Microsoft 365 and Google integrations, the bank CSV learning and the per-country tax packs.
 - **Data location:** hosted per region (AU, US, UK/EU). This matters most for users who keep images in the app cloud.
-- **Open sign-up and AI cost:** because anyone can sign up, each account gets a **fair-use limit** on AI receipt reads, for example a monthly cap with a friendly message. That protects the running cost while billing is out of scope.
-- **Distribution:** as a global product, the app will be listed publicly on the **App Store and Google Play**. Companies can also push it to staff phones through **Intune**.
+- **Open sign-up and AI cost:** because anyone can sign up, each account gets a **fair-use limit** on AI receipt reads, for example a monthly cap with a friendly message. This matters most during the free trial. A paid subscription raises the limit (section 17).
+- **Distribution:** the first release is an installable web app at the app's own web address. Users open it in Safari or Chrome and add it to their home screen, with no app store involved.
+  - Native apps on the **App Store and Google Play** come in a later release.
+  - Companies can then also push them to staff phones through **Intune**.
 
 ## 14. Where receipt images are stored (optional, user's choice)
 
@@ -362,7 +379,9 @@ For someone using the app for themselves, for example because their employer doe
 - **The same month-end button, the same 3rd-business-day reminder and the same mileage feature** as company users.
 - **Joining a company later:** if the employer starts using the app, the individual can join the company workspace and **bring their history with them**.
 
-## 16. Mileage claims (v1, simple version)
+## 16. Mileage claims (later release, simple version)
+
+_Not in the first release. This section describes the planned design._
 
 **Complexity: low to medium, as long as there is no live GPS tracking.** Tracking trips in the background with GPS is the hard, battery-hungry part, so it's out of v1, which is consistent with our "no background activity" decision.
 
@@ -393,14 +412,53 @@ For someone using the app for themselves, for example because their employer doe
 
 **Later:** automatic trip detection with GPS, vehicle types (motorbike, bicycle), and passenger allowances.
 
+## 17. Pricing
+
+| | Individuals | Companies |
+|---|---|---|
+| **Free trial** | 3 months from the day the account is created | 3 months from the day the company workspace is created. Staff who join later share the company's trial clock |
+| **Basic** | **$5 AUD a month**, for up to **35 receipts** that month | **$5 AUD for each active employee** with up to 35 receipts that month |
+| **Premium** | **$10 AUD a month** in any month with **36 to 200 receipts** | **$10 AUD for each active employee** with 36 to 200 receipts that month |
+| **Who counts** | The subscriber | An **active employee** is anyone who **submitted a claim** (a personal claim or a company-card reconciliation, including a resubmitted version) in that calendar month. Staff who didn't claim aren't charged |
+| **How they pay** | **By card** (Stripe) in the web app | **By card** (Stripe) in the admin portal |
+| **Card needed to start?** | No | No |
+
+**How the tiers work:** the tier is **automatic**, and nobody has to press "upgrade".
+
+- **What counts as a receipt:** each new receipt the AI reads in that calendar month (the account's own time zone), counted once. These **don't count**:
+  - editing or re-reading a receipt,
+  - receipts entered by hand without the AI,
+  - a capture undone straight away,
+  - a receipt deleted after the app flagged it as a duplicate, if deleted before the month ends.
+- **Notices:**
+  - at 30 receipts: "5 left on Basic this month",
+  - at 36: "this month will be billed as Premium ($10)",
+  - at 180: "you're close to this month's limit".
+- **Above 200 receipts in a month**, the AI stops reading new receipts until the month ends. Receipts can still be snapped and saved, and the user types the details. A friendly "contact us" message appears, and the app owner can raise the limit for an account.
+- **During the free trial**, up to 100 receipts a month are read by the AI (the app owner can change this).
+- **Why:** the app's main running cost is the AI read, charged per receipt. Basic covers a typical month (10 to 30 receipts), and Premium covers heavy users.
+
+- **After the trial, without a subscription, the account becomes read-only.** Existing receipts, claims and forms can still be viewed and exported (including a full data export), but new captures and claim submissions are paused until someone subscribes. The same applies if a payment fails and isn't fixed within 7 days.
+  - For a company, the admin sees a banner, and staff see "Your company's trial has ended; ask your admin".
+- **Reminders before the trial ends:** at 14 days, 3 days and on the last day.
+- **Other countries:** everyone is charged in AUD for now, and the card issuer converts.
+- **Individual subscribers pay Basic ($5) every month**, including months with no receipts. They can cancel at any time. Only company billing skips staff who didn't claim.
+- **Where paid plans are sold (sales tax):** ClaimTidy is open to sign-ups worldwide, but paid plans are sold only in **paid countries**. That's Australia and the US at launch, plus countries with tax registration thresholds once the accountant confirms them.
+  - Countries that tax foreign sellers of digital services from the first sale (UK, EU, South Korea and others) get the free trial only, until the business registers there. Those users are told "Paid plans aren't available in your country yet" and emailed when their country opens.
+  - The card's country and the billing country must both be on the list.
+  - **Australian GST:** not charged until the business registers for GST (required at A$75,000 turnover). After that, prices stay $5 and $10 GST-inclusive. Sales to overseas customers are GST-free in Australia, but that doesn't remove the other country's own tax, which is why the paid-country list exists.
+- **Joining a company:** an individual who joins a company workspace is billed through the company from then on, and their own subscription ends automatically.
+- Subscription and trial status are shown in settings and in the app owner's console.
+
 ## Screen map
 
 ```
 Sign-up (first run)
   Sign in (Microsoft / Google / Apple / email) ─▶ Company or Myself? ─▶ Which country? ─▶ Where to store images? (skip = app cloud)
+  (3-month free trial starts; no card) ─ after the trial ─▶ Subscribe screen (card via Stripe: individuals subscribe themselves; the admin pays for a company)
 
 Employee / Individual (phone app)
-  [Profile switcher]  Camera  · [+ Trip]
+  [Profile switcher]  Camera  · [+ Trip] (later release)
   Camera ─snap─▶ [Personal | Company card] + category buttons (AI suggestion highlighted)
      │                 │ tap
      │                 ▼
@@ -421,7 +479,7 @@ Company admin (web portal)
   Everything finance has + storage choice (app cloud / Microsoft 365 / Google Drive / phone only) · roles · invites and verified domains · optional Microsoft 365 integrations · company retention (within allowed range)
 
 App owner – you (super-admin console)
-  All companies and individuals · mileage rate tables · fair-use limits · default retention · delete any receipt/claim anywhere · suspend workspace (including impostor workspaces) · tax packs (AU/US/UK) · audit trail across companies
+  All companies and individuals · subscriptions and trials · mileage rate tables · fair-use limits · default retention · delete any receipt/claim anywhere · suspend workspace (including impostor workspaces) · tax packs (AU/US/UK) · audit trail across companies
 ```
 
 ## Open questions
