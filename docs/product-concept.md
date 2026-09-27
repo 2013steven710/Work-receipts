@@ -1,6 +1,6 @@
 # Work Receipts: Product Concept
 
-_Draft v2, 27 Sep 2026. Ideas only; nothing is built yet._
+_Draft v3, 27 Sep 2026. Ideas only; nothing is built yet._
 
 This document records the decisions made after the [market research](market-research.md). Where the two disagree, this document wins. In particular, the research suggested a background screenshot watcher, which we have dropped.
 
@@ -18,7 +18,12 @@ Open the app, snap the receipt, tap a category. The receipt lands in your claim 
 | Claim layout | **One row per receipt**, with **totals per category at the bottom** |
 | Currency | **Multi-currency**, default **AUD** |
 | Connectivity | Works **online and offline**. Offline, receipts are saved now and synced later. |
-| Audience | **Company-wide**: you and your colleagues |
+| Audience | **Company-wide**, about **50–100 employees** |
+| Company platform | **Microsoft 365**: Entra ID sign-in, OneDrive/SharePoint, Excel, Outlook |
+| Approval | The generated claim is **emailed to finance and the employee's manager** for approval |
+| Cards | **Personal cards (reimbursed)** and **company cards (must match the card statement)** |
+| Cost centre / project | **Not required.** Optional field, off by default. |
+| Retention | Receipts kept **6 months** in the app. The **finance manager sees everyone's claims.** |
 
 ## 1. Capture: in-app camera only
 
@@ -38,14 +43,14 @@ Why this is better:
 Because the whole company will use the app, there are two roles.
 
 ### Admin (for example, finance), set up once for the company
-- Creates the **company workspace** and invites staff. Staff sign in with their work account (Microsoft or Google).
+- Creates the **company workspace** and invites staff. Staff sign in with their **Microsoft 365 work account** (single sign-on, so there are no new passwords). Leavers lose access automatically when IT disables their account.
 - Uploads the **company claim form** (the Excel file). The app reads it and suggests:
   - the **category list**,
   - the **column mapping** (Date, Supplier, Description, Category, Amount AUD, GST, Original currency, …),
   - the **totals block** at the bottom.
 - The admin confirms these once, and every employee gets the same buttons and the same claim format.
 - Maintains categories centrally. A change reaches everyone's phone at their next sync.
-- Optional: sets **cost centres or project codes** and **category rules**, such as attendee names for client entertainment or a meal limit per day.
+- Optional: sets **category rules**, such as attendee names for client entertainment or a meal limit per day. A cost centre or project field can be switched on if ever needed, but it is off by default.
 
 ### Employee (everyone)
 - Signs in and sees the company's categories automatically, with no setup.
@@ -55,7 +60,7 @@ Because the whole company will use the app, there are two roles.
 ### Where categories come from
 There are three sources, and they all produce the same thing: **one category list per company, or per team if needed**.
 
-- **A. Sync from a Google Sheet or Excel file:** the admin points the app at a list or header row. The file stays in charge, so edits to it update everyone's buttons. Removed categories are archived, not deleted, so past receipts keep their label.
+- **A. Sync from an Excel file in SharePoint/OneDrive** (a Google Sheet also works): the admin points the app at a list or header row. The file stays in charge, so edits to it update everyone's buttons. Removed categories are archived, not deleted, so past receipts keep their label.
 - **B. Enter categories manually:** add, rename, reorder and archive, with an icon or colour for each.
 - **C. Snap the claim form:** the AI reads the categories and the layout from a photo, screenshot or file of the form. It shows a checklist to confirm, and nothing is saved without review.
 
@@ -84,8 +89,8 @@ Row | Date     | Supplier     | ABN          | Description      | Category      
 
 - **Totals are live formulas** (`SUMIF` by category), not typed-in numbers, so editing a row updates the totals.
 - New receipts are **inserted above the totals block**, so it always stays at the bottom.
-- The **Receipt** column links to the image saved in the employee's Drive or OneDrive folder.
-- **Output:** during the month, the sheet lives as a Google Sheet or Excel Online file. **Generate claim** exports a clean `.xlsx` in the exact company format, plus the receipts PDF.
+- The **Receipt** column links to the image saved in SharePoint.
+- **Output:** during the month, the sheet lives as an Excel file in SharePoint. **Generate claim** exports a clean `.xlsx` in the exact company format, plus the receipts PDF.
 
 ## 4. Currency and GST (Australia)
 
@@ -114,33 +119,115 @@ Row | Date     | Supplier     | ABN          | Description      | Category      
 
 - **Month-end in one button:** category totals, **one PDF of all receipt images in row order**, and warnings before you submit (missing receipts, possible duplicates, a missing ABN, anything that looks personal).
 - **Duplicate detection:** catches the same receipt photographed twice, or an e-receipt that was also photographed. It matches on merchant, amount, date and image similarity.
-- **E-receipts from email:** watches an Outlook or Gmail folder, or accepts forwarded emails. E-receipts land in an **inbox inside the app** for a one-tap category. Nothing is written without the employee's tap.
-- **Privacy:** receipt images and claim sheets live in **the company's own Google Drive or Microsoft 365**. The app's own server stores only the company setup (categories, form mapping, users), not receipts. It only accesses the files it creates or the ones you pick.
+- **E-receipts from email:** watches an Outlook folder, or accepts forwarded emails. E-receipts land in an **inbox inside the app** for a one-tap category. Nothing is written without the employee's tap.
+- **Privacy:** receipt images and claim sheets live in **the company's own Microsoft 365** (SharePoint). The app's own server stores only the company setup (categories, form mapping, users), not receipts. It only accesses the files it creates or the ones you pick.
+
+## 7. Microsoft 365 setup (new)
+
+- **Sign-in:** Microsoft Entra ID single sign-on. IT approves the app once for the whole company.
+- **Storage:** a **SharePoint "Expense Claims" library** with one folder per employee and one sub-folder per month. It holds the receipt images, the live claim sheet and the generated claim pack.
+  - Employees can see only their own folder.
+  - The **finance manager** can see every folder.
+  - The data stays inside the company's Microsoft 365, under IT's existing security and backup.
+- **Excel:** the app fills the company's Excel template through Microsoft Graph, so formulas and formatting are kept.
+- **Email:** claims are sent **from the employee's own Outlook** mailbox, so replies and approvals are ordinary email threads.
+- **Manager lookup:** each employee's manager is read from their Microsoft 365 profile, so nobody has to pick an approver.
+- **Distribution:** the app can be installed privately through **Intune / company app store**, with no public App Store listing needed. It is also possible to list it publicly later.
+
+## 8. Submitting a claim and getting it approved (new)
+
+```
+Employee taps "Generate claim"
+   ▼
+Pre-submit check: missing receipts · duplicates · missing ABN · unmatched company-card lines
+   ▼
+Claim pack created: company .xlsx + receipts PDF (saved to SharePoint)
+   ▼
+Email sent from employee's Outlook ─▶ To: manager · Cc: finance
+   Subject: "Expense claim – Jane Smith – Sep 2026 – $1,284.55"
+   Body: summary by category + [Approve] [Reject with comment] buttons
+   ▼
+Manager approves ─▶ finance approves ─▶ status "Approved" ─▶ finance marks "Paid"
+        │ reject
+        ▼
+Employee gets a notification with the comment ─▶ fixes rows ─▶ resubmits (version 2)
+```
+
+- **Status is tracked** for every claim: Draft → Submitted → Manager approved → Finance approved → Paid, or Rejected.
+- After submitting, the claim is **locked**, so it can't be quietly changed. Any change creates a new version.
+- **Reminders:** the employee is nudged near month-end if they have a draft claim. The approver is nudged if a claim has waited more than N days.
+- If email buttons are blocked, the same **Approve / Reject** actions are available in the finance web portal.
+
+## 9. Personal card vs company card (new)
+
+**At capture:** a **Personal / Company card** switch sits above the category buttons.
+- It remembers your last choice.
+- It auto-switches if the card digits printed on the receipt match your company card.
+
+**Personal card, reimbursement:**
+- The receipt goes into the claim as normal.
+- The total at the bottom is the **amount to reimburse**.
+
+**Company card, reconciliation:**
+- Nothing is reimbursed. Every line on the card statement must have a matching receipt.
+- **Statement import:** finance uploads each month's card statement from the bank (CSV, Excel or PDF). A direct bank feed could come later.
+- **Automatic matching** uses amount (in AUD, as charged), date (± 3 days) and merchant name.
+  - For overseas purchases, the **statement's AUD amount** is used as the real cost.
+- **Result for each cardholder:**
+  - ✅ **Matched:** statement line and receipt are linked.
+  - ⚠️ **Statement line with no receipt:** becomes a to-do in the employee's inbox ("Qantas $412.30 on 14 Sep — snap the receipt or explain").
+  - ⚠️ **Receipt with no statement line:** flagged. It's probably a personal-card receipt, so the app suggests moving it.
+- The claim form shows **two sections**: *Personal (to reimburse)* and *Company card (reconciliation)*, each with its own category totals. If the company form expects two separate files, the app produces two instead.
+
+## 10. Finance manager view (new)
+
+This is a **web portal** for desktop use. Employees only need the phone app.
+- **All claims**, filterable by employee, month, status and category.
+- **Company card reconciliation board:** matched and unmatched lines per cardholder, plus a way to upload statements.
+- **Totals:** spend by category, by team and by month. The whole month can be exported to Excel in one go.
+- **Company setup:** claim form template, categories, rules, cardholders and approvers.
+- **Audit trail:** who submitted, approved, rejected or edited what, and when.
+
+## 11. Retention (new)
+
+- Receipts and claims stay available in the app for **6 months**. After that they drop out of the app's lists.
+- ⚠️ **Check with finance before we set any auto-delete.** The ATO generally requires business records, including expense and FBT records, to be kept for **5 years**. The suggested design:
+  - After 6 months, receipts leave the app.
+  - The **approved claim pack** (Excel plus receipts PDF) stays in the SharePoint archive under the company's normal Microsoft 365 retention policy.
+  - That way the app stays uncluttered and the company still meets its record-keeping obligations.
+
+## 12. Scale and running cost (rough)
+
+- 50–100 employees at about 10–30 receipts each works out to roughly **1,000–3,000 receipts a month**.
+- The AI read costs cents or less per receipt, so AI is a minor cost. Hosting for the small company-setup server is also minor.
+- At this size, the main work is the Microsoft 365 integration, the approval flow and statement matching, not the AI.
 
 ## Screen map
 
 ```
-Employee
-  Camera ─snap─▶ Category buttons (AI suggestion highlighted, fields filling in)
+Employee (phone app)
+  Camera ─snap─▶ [Personal | Company card] + category buttons (AI suggestion highlighted)
      │                 │ tap
      │                 ▼
      │           ✓ Saved (or ⏳ Pending sync) · Undo · Edit
      └─ Pick from Photos ─┘
 
-  Tabs:  Camera · Inbox (e-receipts, items needing a check) · This month (rows + totals) · Settings
-  This month ─▶ Generate claim ─▶ company .xlsx + receipts PDF ─▶ share / email to finance
+  Tabs:  Camera · Inbox (e-receipts, card lines missing a receipt, items needing a check)
+         · This month (rows + totals) · Claims (status: submitted / approved / paid)
+  This month ─▶ Generate claim ─▶ check ─▶ email manager + finance
 
-Admin (finance)
-  Company setup:  Upload claim form ─▶ confirm categories ─▶ confirm column mapping & totals block
-  People:         invite staff · teams · cost centres / projects
-  Rules:          per-category rules · meal limits · attendee requirement
+Manager (email, or the phone app)
+  Claim email ─▶ Approve / Reject with comment
+
+Finance manager (web portal)
+  All claims · Card statements & matching · Reports & export · Company setup · Audit trail
 ```
 
 ## Open questions
 
-1. Does the company run on **Microsoft 365** (Outlook, OneDrive, Excel) or **Google Workspace**? Since the claim form is Excel, Microsoft 365 is likely. That decides where sheets and receipt images are stored, and which sign-in to use.
-2. What happens to a claim after it's generated? Is it **emailed to finance**, **approved by a manager in the app**, or entered into an accounting or payroll system (Xero, MYOB, …)?
-3. Are purchases on **personal cards (reimbursement)**, **company cards**, or both? If there are company cards, should we match receipts to the card statement?
-4. Does every receipt need a **cost centre or project code**, or only some?
-5. Roughly **how many employees**? This affects pricing, admin features and support.
-6. How long must receipts be **kept**, and who in finance needs access to all employees' claims?
+1. **Approval order:** manager first, then finance (sequential), or both at the same time? Does it need **both** approvals, or is one enough?
+2. **Payment:** how are approved reimbursements paid? Through payroll, or through a bank transfer from Xero or MYOB? Should the app export a file for that?
+3. **Company card statements:** which bank issues the cards, and what format can finance download (CSV, Excel, PDF)?
+4. **Claim form:** does the Excel form already have separate personal and company-card sections, or are they two different forms? Could you share a blank copy?
+5. **Retention:** confirm with finance that "6 months" means *in the app* and that approved claim packs are archived for 5 years, not deleted.
+6. **Claim cycle:** is it strictly monthly, with a submission deadline (for example the 5th of the next month)? That drives the reminders.
