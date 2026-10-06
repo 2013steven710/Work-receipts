@@ -1,0 +1,56 @@
+name: Deploy
+
+# Manual until the product owner's accounts exist (docs/deploy.md). Each region is a GitHub
+# environment holding that region's secrets; migrations and the API go to all three in one run.
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.region }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        include:
+          - region: au
+            gcp_region: australia-southeast1 # Sydney
+          - region: us
+            gcp_region: us-east4 # N. Virginia
+          - region: uk
+            gcp_region: europe-west2 # London
+    environment: ${{ matrix.region }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.119.0
+
+      - name: Apply database migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
+          supabase db push
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and deploy the API to Cloud Run
+        run: |
+          IMAGE="${{ matrix.gcp_region }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/claimtidy/api:${{ github.sha }}"
+          gcloud auth configure-docker "${{ matrix.gcp_region }}-docker.pkg.dev" --quiet
+          docker build -f apps/api/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          gcloud run deploy "claimtidy-api-${{ matrix.region }}" \
+            --image "$IMAGE" --region "${{ matrix.gcp_region }}" --project "${{ vars.GCP_PROJECT }}" \
+            --set-env-vars "REGION=${{ matrix.region }},APP_ORIGIN=${{ vars.APP_ORIGIN }}" \
+            --no-allow-unauthenticated
