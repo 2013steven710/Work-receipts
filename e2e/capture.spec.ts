@@ -195,6 +195,8 @@ test("account switching never moves one account's queued receipts to another", a
   await signIn(page, a, "Australia");
   await cutNetwork(context, info.project.name);
   for (let i = 0; i < 3; i++) await capture(page, "Office supplies");
+  await expect(page.locator('[data-testid="entry"][data-pending="true"]')).toHaveCount(3);
+  expect(await entryCount(a)).toBe(0);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("dialog")).toContainText("3 receipts haven't uploaded yet");
   await page.getByRole("button", { name: "Keep them and sign out" }).click();
