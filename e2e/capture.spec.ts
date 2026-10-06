@@ -113,6 +113,21 @@ async function capture(page: Page, category: string) {
   await expect(page.getByRole("status")).toContainText(`Saved to ${category}`);
 }
 
+/**
+ * Cut the phone off from ClaimTidy's servers. Playwright's WebKit offline emulation also blocks
+ * reading in-memory files (which a real iPhone never does), so on WebKit the servers are blocked
+ * instead and the app sees failed requests, as it would with no signal.
+ */
+const SERVER_HOSTS = /^http:\/\/(localhost:8081|127\.0\.0\.1:54321|localhost:54390)\//;
+async function cutNetwork(context: BrowserContext, project: string) {
+  if (project === "iphone") await context.route(SERVER_HOSTS, (route) => route.abort("internetdisconnected"));
+  else await context.setOffline(true);
+}
+async function restoreNetwork(context: BrowserContext, project: string) {
+  if (project === "iphone") await context.unroute(SERVER_HOSTS);
+  else await context.setOffline(false);
+}
+
 async function newPhone(browser: Browser, project: string): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext(test.info().project.use);
   void project;
@@ -135,6 +150,9 @@ test("snap, crop, tap a category: saved and synced", async ({ page }, info) => {
 });
 
 test("offline: 5 captures queue, then sync once with no duplicates, even across a close mid-sync", async ({ browser }, info) => {
+  // Needs real offline emulation (status pill, reopening offline). On iPhone this is the real-device
+  // check in build plan section 9; WebKit's emulation can't read captured photos while offline.
+  test.skip(info.project.name === "iphone", "WebKit offline emulation blocks in-memory file reads");
   const email = emailFor("offline", info.project.name);
   const { context, page } = await newPhone(browser, info.project.name);
   await signIn(page, email, "Australia");
@@ -175,13 +193,13 @@ test("account switching never moves one account's queued receipts to another", a
   const { context, page } = await newPhone(browser, info.project.name);
 
   await signIn(page, a, "Australia");
-  await context.setOffline(true);
+  await cutNetwork(context, info.project.name);
   for (let i = 0; i < 3; i++) await capture(page, "Office supplies");
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("dialog")).toContainText("3 receipts haven't uploaded yet");
   await page.getByRole("button", { name: "Keep them and sign out" }).click();
   await expect(page.getByLabel("Email")).toBeVisible();
-  await context.setOffline(false);
+  await restoreNetwork(context, info.project.name);
 
   await signIn(page, b, "Australia");
   await expect(page.getByTestId("sync-status")).toHaveText("All synced");

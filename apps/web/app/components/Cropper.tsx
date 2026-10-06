@@ -6,35 +6,20 @@ import { defaultQuad, detectDocument, outputSize, type Quad, scaleQuad, toGray, 
 const WORK_EDGE = 2400; // cap the working image so warping stays fast on phones
 const DETECT_EDGE = 400;
 
-/**
- * Decodes a photo: createImageBitmap first, then an <img> from a blob: URL, then from a data: URL
- * (WebKit under offline emulation refuses blob: loads).
- */
+/** Decodes a photo, falling back to an <img> element where createImageBitmap can't read a Blob. */
 async function decodeImage(file: Blob): Promise<{ width: number; height: number } & CanvasImageSource> {
   try {
     return await createImageBitmap(file);
   } catch {
-    // fall through
-  }
-  const viaImage = async (src: string) => {
-    const img = new Image();
-    img.src = src;
-    await img.decode();
-    return Object.assign(img, { width: img.naturalWidth, height: img.naturalHeight });
-  };
-  const url = URL.createObjectURL(file);
-  try {
-    return await viaImage(url);
-  } catch {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error ?? new Error("read failed"));
-      reader.readAsDataURL(file);
-    });
-    return await viaImage(dataUrl);
-  } finally {
-    URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return Object.assign(img, { width: img.naturalWidth, height: img.naturalHeight });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 }
 
