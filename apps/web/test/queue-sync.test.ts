@@ -16,7 +16,7 @@ function item(accountId: string, n: number): QueuedItem {
     cardType: "personal",
     categoryId: null,
     contentType: "image/jpeg",
-    blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }),
+    data: new Uint8Array([1, 2, 3]).buffer,
   };
 }
 

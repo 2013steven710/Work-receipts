@@ -72,7 +72,7 @@ async function capture(page: Page, category: string) {
   // The crop screen is ready (or shows why not).
   const use = page.getByRole("button", { name: "Use photo" });
   await expect
-    .poll(async () => ((await page.locator(".error").count()) ? await page.locator(".error").innerText() : (await use.isEnabled()) ? "ready" : "loading"))
+    .poll(async () => ((await page.locator(".error").count()) ? `${await page.locator(".error").innerText()} [${await page.locator(".error").getAttribute("data-detail")}]` : (await use.isEnabled()) ? "ready" : "loading"))
     .toBe("ready");
   // Tap 1: accept the automatic corners.
   await use.click();

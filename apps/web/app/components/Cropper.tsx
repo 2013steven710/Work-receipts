@@ -37,6 +37,7 @@ export function Cropper({ file, onUse, onCancel }: Props) {
   const [quad, setQuad] = useState<Quad | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string>("");
   const dragging = useRef<number | null>(null);
 
   useEffect(() => {
@@ -63,8 +64,10 @@ export function Cropper({ file, onUse, onCancel }: Props) {
         if (cancelled) return;
         setSize({ w, h });
         setQuad(found ? scaleQuad(found, 1 / ds) : defaultQuad(w, h));
-      } catch {
-        if (!cancelled) setError("This image couldn't be opened. Try another photo.");
+      } catch (e) {
+        if (cancelled) return;
+        setError("This image couldn't be opened. Try another photo.");
+        setErrorDetail(`${(e as Error)?.name ?? ""}: ${(e as Error)?.message ?? String(e)}`);
       }
     })();
     return () => {
@@ -133,7 +136,11 @@ export function Cropper({ file, onUse, onCancel }: Props) {
           </svg>
         )}
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error" data-detail={errorDetail}>
+          {error}
+        </p>
+      )}
       <div className="row">
         <button className="secondary" onClick={onCancel} disabled={busy}>
           Retake

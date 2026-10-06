@@ -13,7 +13,9 @@ export interface QueuedItem {
   cardType: "personal" | "company";
   categoryId: string | null;
   contentType: string;
-  blob: Blob;
+  /** The image or PDF bytes. Stored as an ArrayBuffer, not a Blob: Safari can't keep Blobs in
+   * IndexedDB in private browsing. */
+  data: ArrayBuffer;
   /** Set once the image is in storage, so a retry doesn't upload it again. */
   imagePath?: string;
   /** Set when the server refused the item for a reason a retry won't fix. */

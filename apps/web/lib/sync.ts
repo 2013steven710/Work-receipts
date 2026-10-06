@@ -51,7 +51,7 @@ export async function syncQueue(target: SyncTarget, doFetch: typeof fetch = fetc
               {
                 method: "PUT",
                 headers: { "content-type": item.contentType, "x-upsert": "false" },
-                body: item.blob,
+                body: new Blob([item.data], { type: item.contentType }),
                 ...(target.signal && { signal: target.signal }),
               },
             );

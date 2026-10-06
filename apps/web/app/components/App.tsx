@@ -313,7 +313,7 @@ export function App() {
       cardType,
       categoryId,
       contentType,
-      blob,
+      data: await blob.arrayBuffer(),
     };
     const queue = await Queue.open(account.accountId, account.info.region);
     await queue.add(item);
