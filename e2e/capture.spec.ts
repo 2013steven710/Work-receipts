@@ -67,8 +67,40 @@ async function receiptPhoto(page: Page): Promise<{ name: string; mimeType: strin
   return { name: "receipt.jpg", mimeType: "image/jpeg", buffer: Buffer.from(dataUrl.split(",")[1]!, "base64") };
 }
 
+/**
+ * Hands a photo to the camera input the way the phone does: an in-memory file and a change event.
+ * (Playwright's setInputFiles gives WebKit a file that can't be read while offline is emulated.)
+ */
+async function snap(page: Page) {
+  await page.evaluate(async () => {
+    const c = document.createElement("canvas");
+    c.width = 900;
+    c.height = 1200;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#3b3b3b";
+    ctx.fillRect(0, 0, 900, 1200);
+    ctx.fillStyle = "#f5f5f0";
+    ctx.beginPath();
+    ctx.moveTo(220, 120);
+    ctx.lineTo(700, 160);
+    ctx.lineTo(660, 1080);
+    ctx.lineTo(180, 1040);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#222";
+    ctx.font = "40px sans-serif";
+    ctx.fillText("CAFE NERO  $88.00", 260, 400);
+    const blob = await new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), "image/jpeg", 0.9));
+    const input = document.querySelector<HTMLInputElement>('[data-testid="snap"]')!;
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], "receipt.jpg", { type: "image/jpeg" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 async function capture(page: Page, category: string) {
-  await page.getByTestId("snap").setInputFiles(await receiptPhoto(page));
+  await snap(page);
   // The crop screen is ready (or shows why not).
   const use = page.getByRole("button", { name: "Use photo" });
   await expect
