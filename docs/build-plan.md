@@ -484,13 +484,18 @@ pnpm e2e:mobile    # Playwright mobile emulation (WebKit iPhone + Chromium Andro
 | Milestone | Status | Notes |
 |---|---|---|
 | M0 Foundations | **Done locally; hosted parts wait for accounts** | Monorepo (`packages/core`, `apps/api`, `apps/web`) builds. Local Supabase starts. The R1 schema (all section 5 tables, read-only RLS, `private` schema, four storage buckets) is in `supabase/migrations`. `pnpm test:db` runs 150 pgTAP checks for (a)–(d), derived from the catalog so every future table is covered; each check was mutation-tested (a deliberate leak or write grant makes it fail). CI runs lint, typecheck, unit tests, builds and the pgTAP suite on every push. **Waiting on the owner's accounts** (`docs/deploy.md`): the first three-region deploy, and confirming both Auth hooks run on hosted projects |
-| M1 Sign-up and capture | Next | Account directory and Auth hooks, sign-in, country question, capture, offline queue |
+| M1 Sign-up and capture | **Done locally, except Google/Microsoft sign-in buttons; hosted parts wait for accounts** | **Directory** (`apps/directory`): email codes, Google/Microsoft ID-token verification, reservations, and both regional Auth hooks, with HMAC keys only. 16 integration tests run against real local Supabase Auth with the hooks enabled: new and returning users, one account per identity, a provider email change, verified-email linking (BP-010), direct sign-up at the wrong region refused (BP-008), and conflicts failing closed. **API**: verified regional sessions, the country question, signed uploads, and idempotent entries with the account check (10 tests). **Web app**: email sign-in, country question, camera or Photos/Files (including PDF), automatic corners with drag-to-adjust and a perspective crop, the category tap (2 taps after the photo), Undo/Edit, a per-account offline queue, Background Sync, the Android share target, and safe sign-out. **E2E** (Playwright, mobile emulation, full local stack): capture, 5 offline captures syncing once across a close mid-sync, account switching (mutation-checked), and share target. Stress-run 24/24. **Not yet:** Google and Microsoft buttons in the app (need the owner's client IDs; the directory side is done and tested with a stand-in key set). Real-device checks (section 9) wait for a hosted deploy |
 | M2–M9 | Not started | |
 
 **Implementation notes (deviations from the plan text):**
 - pnpm 10 instead of 9, and TypeScript 6.0 (typescript-eslint doesn't support TypeScript 7 yet).
 - The approval status view in section 5 isn't needed: `approval_requests` itself holds no verification material (all of it is in `private.approval_secrets`), and a pgTAP check forbids secret-like columns in every user-readable table.
 - Server-only tables are unreadable by clients, not just unwritable. The app reads counts, tiers and invoice status through the API.
+- Email sign-in uses one code: the directory sends and checks it, then asks the region's admin API for a one-time sign-in token that the app redeems. The user never sees a second code.
+- Provider identities are keyed on issuer + subject. For Microsoft, the issuer contains the tenant ID and the subject is stable per app registration, which meets the plan's requirement for a stable, non-email key. Microsoft emails count as verified only with the `xms_edov` claim.
+- The custom access token hook also refuses password sessions (R1 has no passwords), and treats a just-redeemed email token as proof of the email, because Supabase issues the first session before it records the confirmation.
+- The web app builds with webpack, not Turbopack, so the shared packages' `.js` import suffixes resolve.
+- Playwright is pinned to 1.56.1 to match this environment's Chromium. CI installs its own browsers, including WebKit for the iPhone project.
 
 ## Change log
 

@@ -69,8 +69,13 @@ async function receiptPhoto(page: Page): Promise<{ name: string; mimeType: strin
 
 async function capture(page: Page, category: string) {
   await page.getByTestId("snap").setInputFiles(await receiptPhoto(page));
+  // The crop screen is ready (or shows why not).
+  const use = page.getByRole("button", { name: "Use photo" });
+  await expect
+    .poll(async () => ((await page.locator(".error").count()) ? await page.locator(".error").innerText() : (await use.isEnabled()) ? "ready" : "loading"))
+    .toBe("ready");
   // Tap 1: accept the automatic corners.
-  await page.getByRole("button", { name: "Use photo" }).click();
+  await use.click();
   // Tap 2: the category saves it.
   await page.getByRole("button", { name: category }).click();
   await expect(page.getByRole("status")).toContainText(`Saved to ${category}`);

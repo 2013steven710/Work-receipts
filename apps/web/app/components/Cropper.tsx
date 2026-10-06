@@ -6,6 +6,23 @@ import { defaultQuad, detectDocument, outputSize, type Quad, scaleQuad, toGray, 
 const WORK_EDGE = 2400; // cap the working image so warping stays fast on phones
 const DETECT_EDGE = 400;
 
+/** Decodes a photo, falling back to an <img> element where createImageBitmap can't read a Blob. */
+async function decodeImage(file: Blob): Promise<{ width: number; height: number } & CanvasImageSource> {
+  try {
+    return await createImageBitmap(file);
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return Object.assign(img, { width: img.naturalWidth, height: img.naturalHeight });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
 interface Props {
   file: Blob;
   onUse: (blob: Blob) => void;
@@ -26,7 +43,7 @@ export function Cropper({ file, onUse, onCancel }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const bitmap = await createImageBitmap(file);
+        const bitmap = await decodeImage(file);
         const scale = Math.min(1, WORK_EDGE / Math.max(bitmap.width, bitmap.height));
         const w = Math.round(bitmap.width * scale);
         const h = Math.round(bitmap.height * scale);
