@@ -7,7 +7,7 @@ _Draft v11, 27 Sep 2026. The product is named **ClaimTidy** (claimtidy.com). v2 
 > - **Billing (sections 6.10–6.13) is not yet independently approved.** The product owner decided to **validate it through testing**: before M8 starts, the Stripe mechanics are proven in Stripe test mode, and a focused Codex review of the billing section is run.
 >   - This covers first-payment confirmation, retries, one subscription per account, Radar country rules, and the once-only outcome per Checkout session.
 >   - M0–M7 don't depend on billing.
-> - **Building hasn't started.** It needs the owner's go-ahead.
+> - **Building started on 6 Oct 2026** with the owner's go-ahead. Progress is tracked in section 13.
 
 ## 1. Goal
 
@@ -478,6 +478,19 @@ pnpm e2e:mobile    # Playwright mobile emulation (WebKit iPhone + Chromium Andro
 4. **AI model cost trade-off.** `claude-opus-5` is the default; a cheaper model only if the M2 eval shows equal accuracy and the owner prefers the saving.
 5. ~~Sign in with Apple in R1?~~ **Decided (27 Sep 2026): not in R1.** It comes with the native apps.
 6. ~~Sales tax approach.~~ **Decided (27 Sep 2026): Stripe with paid countries** (section 6.13). The accountant confirms the list before launch. Earlier text, kept for reference: Stripe Tax plus your own registrations, as the accountant advises, or a merchant-of-record provider. Until decided, R1 can launch paid plans to **Australia only**, with UK and US users getting the free trial.
+
+## 13. Build progress
+
+| Milestone | Status | Notes |
+|---|---|---|
+| M0 Foundations | **Done locally; hosted parts wait for accounts** | Monorepo (`packages/core`, `apps/api`, `apps/web`) builds. Local Supabase starts. The R1 schema (all section 5 tables, read-only RLS, `private` schema, four storage buckets) is in `supabase/migrations`. `pnpm test:db` runs 150 pgTAP checks for (a)–(d), derived from the catalog so every future table is covered; each check was mutation-tested (a deliberate leak or write grant makes it fail). CI runs lint, typecheck, unit tests, builds and the pgTAP suite on every push. **Waiting on the owner's accounts** (`docs/deploy.md`): the first three-region deploy, and confirming both Auth hooks run on hosted projects |
+| M1 Sign-up and capture | Next | Account directory and Auth hooks, sign-in, country question, capture, offline queue |
+| M2–M9 | Not started | |
+
+**Implementation notes (deviations from the plan text):**
+- pnpm 10 instead of 9, and TypeScript 6.0 (typescript-eslint doesn't support TypeScript 7 yet).
+- The approval status view in section 5 isn't needed: `approval_requests` itself holds no verification material (all of it is in `private.approval_secrets`), and a pgTAP check forbids secret-like columns in every user-readable table.
+- Server-only tables are unreadable by clients, not just unwritable. The app reads counts, tiers and invoice status through the API.
 
 ## Change log
 
