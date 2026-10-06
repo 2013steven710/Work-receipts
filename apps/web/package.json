@@ -4,19 +4,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "build:sw": "node scripts/build-sw.mjs",
+    "predev": "node scripts/build-sw.mjs",
+    "dev": "next dev --webpack",
+    "prebuild": "node scripts/build-sw.mjs",
+    "build": "next build --webpack",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p sw"
   },
   "dependencies": {
     "@claimtidy/core": "workspace:*",
+    "@supabase/supabase-js": "^2.117.2",
+    "idb": "^8.0.3",
     "next": "^16.3.8",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0"
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.5"
   }
 }

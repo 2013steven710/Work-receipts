@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/next-env.d.ts", "supabase/**"],
+    ignores: ["test-results/**", "playwright-report/**", "**/node_modules/**", "**/dist/**", "**/.next/**", "**/next-env.d.ts", "supabase/**", "apps/web/public/sw.js"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -11,12 +11,6 @@ export default tseslint.config(
     files: ["**/*.mjs", "**/*.js"],
     languageOptions: {
       globals: { process: "readonly", console: "readonly", URL: "readonly" },
-    },
-  },
-  {
-    files: ["apps/web/public/sw.js"],
-    languageOptions: {
-      globals: { self: "readonly", caches: "readonly", fetch: "readonly", URL: "readonly" },
     },
   },
   {
