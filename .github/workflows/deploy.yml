@@ -48,9 +48,38 @@ jobs:
         run: |
           IMAGE="${{ matrix.gcp_region }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/claimtidy/api:${{ github.sha }}"
           gcloud auth configure-docker "${{ matrix.gcp_region }}-docker.pkg.dev" --quiet
-          docker build -f apps/api/Dockerfile -t "$IMAGE" .
+          docker build -f Dockerfile.service --build-arg APP=api -t "$IMAGE" .
           docker push "$IMAGE"
           gcloud run deploy "claimtidy-api-${{ matrix.region }}" \
             --image "$IMAGE" --region "${{ matrix.gcp_region }}" --project "${{ vars.GCP_PROJECT }}" \
             --set-env-vars "REGION=${{ matrix.region }},APP_ORIGIN=${{ vars.APP_ORIGIN }}" \
             --no-allow-unauthenticated
+
+  directory:
+    name: Deploy account directory (AU)
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: directory
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and deploy the directory to Cloud Run (Sydney)
+        run: |
+          IMAGE="australia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/claimtidy/directory:${{ github.sha }}"
+          gcloud auth configure-docker australia-southeast1-docker.pkg.dev --quiet
+          docker build -f Dockerfile.service --build-arg APP=directory -t "$IMAGE" .
+          docker push "$IMAGE"
+          # Secrets (DATABASE_URL, KEY_SECRET, TICKET_SECRET, CODE_SECRET, REGIONS, POSTMARK_TOKEN)
+          # come from Secret Manager; see docs/deploy.md.
+          gcloud run deploy claimtidy-directory \
+            --image "$IMAGE" --region australia-southeast1 --project "${{ vars.GCP_PROJECT }}" \
+            --set-env-vars "APP_ORIGIN=${{ vars.APP_ORIGIN }},MAIL_MODE=postmark,GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }},MICROSOFT_CLIENT_ID=${{ vars.MICROSOFT_CLIENT_ID }}" \
+            --set-secrets "DATABASE_URL=directory-database-url:latest,KEY_SECRET=directory-key-secret:latest,TICKET_SECRET=directory-ticket-secret:latest,CODE_SECRET=directory-code-secret:latest,REGIONS=directory-regions:latest,POSTMARK_TOKEN=postmark-token:latest" \
+            --allow-unauthenticated

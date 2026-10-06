@@ -1,0 +1,22 @@
+# One image recipe for the Node services. Build from the repo root:
+#   docker build -f Dockerfile.service --build-arg APP=api .
+#   docker build -f Dockerfile.service --build-arg APP=directory .
+FROM node:22-slim AS build
+ARG APP
+WORKDIR /repo
+RUN corepack enable
+COPY . .
+RUN pnpm install --frozen-lockfile --filter "@claimtidy/${APP}..."
+RUN pnpm --filter "@claimtidy/${APP}" build
+RUN pnpm --filter "@claimtidy/${APP}" deploy --prod --legacy /out
+
+FROM node:22-slim
+ARG APP
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /out/node_modules ./node_modules
+COPY --from=build /out/package.json ./package.json
+COPY --from=build /repo/apps/${APP}/dist ./dist
+USER node
+EXPOSE 8080
+CMD ["node", "dist/server.js"]
