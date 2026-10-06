@@ -89,29 +89,30 @@ export interface StoredSession {
 
 const SESSION_DB = "claimtidy-session";
 
-async function sessionDb(): Promise<IDBPDatabase> {
-  return openDB(SESSION_DB, 1, {
+// One long-lived connection per page (and per worker): opening and closing it on every token
+// refresh raced with sign-out in Chromium and could leave the open request waiting.
+let sessionConnection: Promise<IDBPDatabase> | null = null;
+
+function sessionDb(): Promise<IDBPDatabase> {
+  sessionConnection ??= openDB(SESSION_DB, 1, {
     upgrade(database) {
       database.createObjectStore("current");
     },
+    terminated() {
+      sessionConnection = null;
+    },
   });
+  return sessionConnection;
 }
 
 export async function saveSession(session: StoredSession): Promise<void> {
-  const db = await sessionDb();
-  await db.put("current", session, "session");
-  db.close();
+  await (await sessionDb()).put("current", session, "session");
 }
 
 export async function loadSession(): Promise<StoredSession | undefined> {
-  const db = await sessionDb();
-  const session = (await db.get("current", "session")) as StoredSession | undefined;
-  db.close();
-  return session;
+  return (await (await sessionDb()).get("current", "session")) as StoredSession | undefined;
 }
 
 export async function clearSession(): Promise<void> {
-  const db = await sessionDb();
-  await db.delete("current", "session");
-  db.close();
+  await (await sessionDb()).delete("current", "session");
 }

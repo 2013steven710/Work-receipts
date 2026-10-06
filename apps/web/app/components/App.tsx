@@ -3,12 +3,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clearSession, Queue, type QueuedItem, saveSession } from "../../lib/queue";
+import { takeShared } from "../../lib/shared";
 import {
   api,
   ApiError,
   apiUrl,
   clearRegionInfo,
   directory,
+  forgetClient,
   getRegionInfo,
   regionalClient,
   type RegionInfo,
@@ -59,6 +61,15 @@ export function App() {
   const [signingOut, setSigningOut] = useState(false);
   const syncAbort = useRef<AbortController | null>(null);
   const syncedIds = useRef(new Map<string, string>());
+
+  const openFile = useCallback((file: File) => {
+    setError(null);
+    if (file.type === "application/pdf") {
+      setScreen({ name: "categorise", blob: file, contentType: "application/pdf", previewUrl: "" });
+    } else {
+      setScreen({ name: "crop", file });
+    }
+  }, []);
 
   // ---- Data ------------------------------------------------------------------------------------
 
@@ -139,8 +150,14 @@ export function App() {
       setScreen({ name: "home" });
       await refreshLists(acc).catch(() => {});
       void syncNow(acc);
+      // A receipt shared into the app (Android) goes straight to cropping or categorising.
+      if (new URLSearchParams(location.search).has("shared")) {
+        history.replaceState(null, "", "/");
+        const shared = await takeShared().catch(() => undefined);
+        if (shared) openFile(new File([shared.blob], shared.name, { type: shared.type }));
+      }
     },
-    [loadMe, refreshLists, syncNow],
+    [loadMe, refreshLists, syncNow, openFile],
   );
 
   // ---- Boot, connectivity, worker messages ----------------------------------------------------
@@ -282,13 +299,7 @@ export function App() {
   // ---- Capture -------------------------------------------------------------------------------
 
   const onFile = (file: File | undefined) => {
-    if (!file) return;
-    setError(null);
-    if (file.type === "application/pdf") {
-      setScreen({ name: "categorise", blob: file, contentType: "application/pdf", previewUrl: "" });
-    } else {
-      setScreen({ name: "crop", file });
-    }
+    if (file) openFile(file);
   };
 
   const onPick = async (blob: Blob, contentType: string, categoryId: string) => {
@@ -368,16 +379,11 @@ export function App() {
     if (!account) return;
     syncAbort.current?.abort();
     syncAbort.current = null;
-    if (deleteUnsynced) {
-      const queue = await Queue.open(account.accountId, account.info.region);
-      for (const item of await queue.list()) await queue.remove(item.clientUuid);
-      queue.close();
-    }
-    // Remove this account's cached data; only its unsynced captures stay, in its own database.
-    await clearSession();
-    localStorage.removeItem(meKey(account.accountId));
-    await account.client.auth.signOut({ scope: "local" }).catch(() => {});
+    // Forget the account on this device first, synchronously, so even closing the app mid sign-out
+    // can't reopen it signed in. Only its unsynced captures stay, in its own database.
     clearRegionInfo();
+    forgetClient(account.info.region);
+    localStorage.removeItem(meKey(account.accountId));
     syncedIds.current.clear();
     setAccount(null);
     setMe(null);
@@ -386,6 +392,17 @@ export function App() {
     setToast(null);
     setSigningOut(false);
     setScreen({ name: "email" });
+
+    if (deleteUnsynced) {
+      const queue = await Queue.open(account.accountId, account.info.region);
+      for (const item of await queue.list()) await queue.remove(item.clientUuid);
+      queue.close();
+    }
+    // Stop the service worker acting for this account, and end the session at the server.
+    // Neither may hold the user on this screen.
+    const limit = () => new Promise((r) => setTimeout(r, 3000));
+    await Promise.race([clearSession().catch(() => {}), limit()]);
+    await Promise.race([account.client.auth.signOut({ scope: "local" }).catch(() => {}), limit()]);
   };
 
   // ---- Render --------------------------------------------------------------------------------

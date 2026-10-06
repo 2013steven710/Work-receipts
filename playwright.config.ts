@@ -21,7 +21,7 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"]],
+  reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
   globalSetup: "./e2e/global-setup.ts",
   use: { baseURL: WEB, trace: "retain-on-failure" },
   projects,

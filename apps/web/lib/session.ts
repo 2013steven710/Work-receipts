@@ -40,6 +40,16 @@ export function regionalClient(info: RegionInfo): SupabaseClient {
   return client;
 }
 
+/** Drops the in-memory client and its stored session for a region (sign-out). */
+export function forgetClient(region: string): void {
+  clients.delete(region);
+  try {
+    localStorage.removeItem(`claimtidy-auth-${region}`);
+  } catch {
+    // ignore
+  }
+}
+
 export function apiUrl(region: string): string {
   const url = env.apiUrls[region];
   if (!url) throw new Error(`No API configured for region ${region}`);

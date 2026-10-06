@@ -8,7 +8,8 @@ const db = new pg.Pool({ connectionString: "postgresql://postgres:postgres@127.0
 test.afterAll(async () => db.end());
 
 const run = Date.now().toString(36);
-const emailFor = (who: string, project: string) => `${who}-${project}-${run}@e2e.claimtidy.test`;
+const emailFor = (who: string, project: string) =>
+  `${who}-${project}-${run}-${test.info().repeatEachIndex}-${test.info().retry}@e2e.claimtidy.test`;
 
 async function entryCount(email: string): Promise<number> {
   const { rows } = await db.query(
@@ -142,6 +143,7 @@ test("account switching never moves one account's queued receipts to another", a
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("dialog")).toContainText("3 receipts haven't uploaded yet");
   await page.getByRole("button", { name: "Keep them and sign out" }).click();
+  await expect(page.getByLabel("Email")).toBeVisible();
   await context.setOffline(false);
 
   await signIn(page, b, "Australia");
@@ -155,10 +157,44 @@ test("account switching never moves one account's queued receipts to another", a
   const cached = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("claimtidy.me.")));
   expect(cached).toHaveLength(1);
 
+  // Reload straight after tapping Sign out (as if the app were closed mid sign-out): still signed out.
   await page.getByRole("button", { name: "Sign out" }).click();
   await signIn(page, a);
   await expect.poll(() => entryCount(a)).toBe(3);
   await expect(page.getByTestId("sync-status")).toHaveText("All synced");
   expect(await entryCount(b)).toBe(0);
   await context.close();
+});
+
+test("Android share target: a receipt shared into the app opens for categorising", async ({ page }, info) => {
+  test.skip(info.project.name !== "android", "Share targets are Android-only");
+  const email = emailFor("share", info.project.name);
+  await signIn(page, email, "Australia");
+  await page.reload(); // let the service worker control the page
+  await expect(page.getByText("Snap receipt")).toBeVisible();
+  const photo = await receiptPhoto(page);
+
+  // What Android does when the user shares a photo to the installed app: a multipart POST.
+  await page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = "/share-target";
+    form.enctype = "multipart/form-data";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.name = "receipt";
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], "shared.jpg", { type: "image/jpeg" }));
+    input.files = dt.files;
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  }, photo.buffer.toString("base64"));
+
+  await page.getByRole("button", { name: "Use photo" }).click();
+  await page.getByRole("button", { name: "Air travel" }).click();
+  await expect(page.getByTestId("sync-status")).toHaveText("All synced");
+  await expect.poll(() => entryCount(email)).toBe(1);
+  expect(new URL(page.url()).search).toBe("");
 });
