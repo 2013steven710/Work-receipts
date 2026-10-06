@@ -120,7 +120,7 @@ async function capture(page: Page, category: string) {
  */
 const SERVER_HOSTS = /^http:\/\/(localhost:8081|127\.0\.0\.1:54321|localhost:54390)\//;
 async function cutNetwork(context: BrowserContext, project: string) {
-  if (project === "iphone") await context.route(SERVER_HOSTS, (route) => route.abort("internetdisconnected"));
+  if (project === "iphone") await context.route(SERVER_HOSTS, (route) => route.abort());
   else await context.setOffline(true);
 }
 async function restoreNetwork(context: BrowserContext, project: string) {
@@ -129,8 +129,9 @@ async function restoreNetwork(context: BrowserContext, project: string) {
 }
 
 async function newPhone(browser: Browser, project: string): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await browser.newContext(test.info().project.use);
-  void project;
+  // Request routing can miss requests from pages a service worker controls, so the WebKit run
+  // (which cuts the network by routing) goes without the worker.
+  const context = await browser.newContext({ ...test.info().project.use, ...(project === "iphone" && { serviceWorkers: "block" as const }) });
   return { context, page: await context.newPage() };
 }
 
