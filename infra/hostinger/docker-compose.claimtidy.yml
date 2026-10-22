@@ -1,0 +1,110 @@
+# ClaimTidy on a Hostinger VPS, layered over the official self-hosted Supabase compose file
+# (COMPOSE_FILE in /opt/claimtidy/supabase/.env). Values come from the managed CLAIMTIDY block
+# that setup-server.sh writes into that .env.
+
+services:
+  # Supabase's gateway and pooler listen on this server only. Docker publishes ports around the
+  # firewall, so they must not bind to the public interface; Caddy is the only public entry.
+  api-gw:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+
+  # Not used by ClaimTidy: off, for a smaller attack surface and more memory on a KVM 2.
+  functions:
+    profiles: ["disabled"]
+  realtime:
+    profiles: ["disabled"]
+  supavisor:
+    profiles: ["disabled"]
+
+  # The account directory's hooks (build plan section 4: BP-008, BP-010). Supabase Auth only
+  # calls hooks over HTTPS, so every region, the primary included, uses the public address.
+  auth:
+    environment:
+      GOTRUE_HOOK_BEFORE_USER_CREATED_ENABLED: "true"
+      GOTRUE_HOOK_BEFORE_USER_CREATED_URI: ${CLAIMTIDY_HOOK_BASE}/hooks/${CLAIMTIDY_REGION}/before-user-created
+      GOTRUE_HOOK_BEFORE_USER_CREATED_SECRETS: ${CLAIMTIDY_HOOK_SECRET}
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED: "true"
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI: ${CLAIMTIDY_HOOK_BASE}/hooks/${CLAIMTIDY_REGION}/custom-access-token
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS: ${CLAIMTIDY_HOOK_SECRET}
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${CLAIMTIDY_GOOGLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${CLAIMTIDY_GOOGLE_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${CLAIMTIDY_GOOGLE_SECRET:-}
+      GOTRUE_EXTERNAL_AZURE_ENABLED: ${CLAIMTIDY_MICROSOFT_ENABLED:-false}
+      GOTRUE_EXTERNAL_AZURE_CLIENT_ID: ${CLAIMTIDY_MICROSOFT_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_AZURE_SECRET: ${CLAIMTIDY_MICROSOFT_SECRET:-}
+
+  claimtidy-api:
+    container_name: claimtidy-api
+    build:
+      context: /opt/claimtidy/app
+      dockerfile: Dockerfile.service
+      args:
+        APP: api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      REGION: ${CLAIMTIDY_REGION}
+      APP_ORIGIN: https://${CLAIMTIDY_DOMAIN}
+      SUPABASE_URL: http://api-gw:8000
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_JWT_ISSUER: ${API_EXTERNAL_URL}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+
+  # Primary server only (the AU region): the global account directory and the web app.
+  claimtidy-directory:
+    container_name: claimtidy-directory
+    profiles: ["primary"]
+    build:
+      context: /opt/claimtidy/app
+      dockerfile: Dockerfile.service
+      args:
+        APP: directory
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ORIGIN: https://${CLAIMTIDY_DOMAIN}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/directory
+      KEY_SECRET: ${CLAIMTIDY_KEY_SECRET}
+      TICKET_SECRET: ${CLAIMTIDY_TICKET_SECRET}
+      CODE_SECRET: ${CLAIMTIDY_CODE_SECRET}
+      REGIONS: ${CLAIMTIDY_REGIONS_JSON}
+      GOOGLE_CLIENT_ID: ${CLAIMTIDY_GOOGLE_CLIENT_ID:-}
+      MICROSOFT_CLIENT_ID: ${CLAIMTIDY_MICROSOFT_CLIENT_ID:-}
+      MAIL_MODE: ${CLAIMTIDY_MAIL_MODE:-postmark}
+      POSTMARK_TOKEN: ${CLAIMTIDY_POSTMARK_TOKEN:-}
+      MAIL_FROM: ClaimTidy <no-reply@${CLAIMTIDY_DOMAIN}>
+
+  claimtidy-web:
+    container_name: claimtidy-web
+    profiles: ["primary"]
+    build:
+      context: /opt/claimtidy/app
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_DIRECTORY_URL: https://id.${CLAIMTIDY_DOMAIN}
+        NEXT_PUBLIC_API_URLS: ${CLAIMTIDY_API_URLS_JSON}
+    restart: unless-stopped
+
+  # The only public entry point: HTTPS with automatic certificates.
+  caddy:
+    container_name: claimtidy-caddy
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - /opt/claimtidy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

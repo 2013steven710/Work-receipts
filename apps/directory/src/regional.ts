@@ -15,7 +15,7 @@ export interface AdminUser {
 }
 
 async function admin<T>(stack: RegionStack, path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${stack.supabaseUrl}/auth/v1/admin${path}`, {
+  const res = await fetch(`${stack.adminUrl ?? stack.supabaseUrl}/auth/v1/admin${path}`, {
     ...init,
     headers: {
       apikey: stack.serviceKey,

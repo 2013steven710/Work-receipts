@@ -160,8 +160,10 @@ export function buildApp({ config, db, mailer, verifier: givenVerifier }: Deps):
     }
     return { region, stack };
   };
+  // Supabase Auth reads a refusal from a 200 response's error object; any other status reaches
+  // the user as an unexplained "unexpected status" failure.
   const refuse = (reply: FastifyReply, message: string) =>
-    reply.code(403).send({ error: { http_code: 403, message } });
+    reply.code(200).send({ error: { http_code: 403, message } });
 
   app.post("/hooks/:region/before-user-created", async (request, reply) => {
     const hook = hookRegion(request, reply);

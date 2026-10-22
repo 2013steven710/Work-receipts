@@ -3,6 +3,8 @@ import { z } from "zod";
 
 const RegionStack = z.object({
   supabaseUrl: z.url(),
+  // Optional internal address for admin calls (the region on the directory's own server).
+  adminUrl: z.url().optional(),
   serviceKey: z.string().min(1),
   anonKey: z.string().min(1),
   // Standard Webhooks secret configured on that region's Auth hooks ("v1,whsec_<base64>").
