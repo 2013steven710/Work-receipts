@@ -21,6 +21,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - name: Lint server scripts
+        run: shellcheck -S warning infra/hostinger/*.sh
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build

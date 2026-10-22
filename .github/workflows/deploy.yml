@@ -1,85 +1,75 @@
 name: Deploy
 
-# Manual until the product owner's accounts exist (docs/deploy.md). Each region is a GitHub
-# environment holding that region's secrets; migrations and the API go to all three in one run.
+# Deploys ClaimTidy to the Hostinger VPS servers (docs/deploy.md). Manual: Actions → Deploy → Run.
+# Regions without a host variable are skipped, so this works with just the AU server to begin with.
+# Order: US and UK first, then their connection cards go to the primary (AU), which deploys last.
 on:
   workflow_dispatch:
 
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
-    name: Deploy ${{ matrix.region }}
+    name: Deploy to Hostinger
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      max-parallel: 1
-      matrix:
-        include:
-          - region: au
-            gcp_region: australia-southeast1 # Sydney
-          - region: us
-            gcp_region: us-east4 # N. Virginia
-          - region: uk
-            gcp_region: europe-west2 # London
-    environment: ${{ matrix.region }}
+    environment: production
     permissions:
       contents: read
-      id-token: write
+    env:
+      DOMAIN: ${{ vars.CLAIMTIDY_DOMAIN }}
+      HOST_AU: ${{ vars.HOST_AU }}
+      HOST_US: ${{ vars.HOST_US }}
+      HOST_UK: ${{ vars.HOST_UK }}
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
-        with:
-          version: 2.119.0
 
-      - name: Apply database migrations
+      - name: Check settings
+        run: |
+          [ -n "$DOMAIN" ] || { echo "Set the repository variable CLAIMTIDY_DOMAIN (e.g. claimtidy.com)"; exit 1; }
+          [ -n "$HOST_AU" ] || { echo "Set the repository variable HOST_AU (the AU server's IP address)"; exit 1; }
+
+      - name: SSH key
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
-          supabase db push
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pin the servers' host keys when provided; otherwise trust them on first use.
+          if [ -n "$KNOWN_HOSTS" ]; then printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts; fi
+          printf 'Host *\n  User root\n  StrictHostKeyChecking %s\n  ServerAliveInterval 30\n' \
+            "$([ -n "$KNOWN_HOSTS" ] && echo yes || echo accept-new)" > ~/.ssh/config
 
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Build and deploy the API to Cloud Run
+      - name: Deploy US and UK
         run: |
-          IMAGE="${{ matrix.gcp_region }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/claimtidy/api:${{ github.sha }}"
-          gcloud auth configure-docker "${{ matrix.gcp_region }}-docker.pkg.dev" --quiet
-          docker build -f Dockerfile.service --build-arg APP=api -t "$IMAGE" .
-          docker push "$IMAGE"
-          gcloud run deploy "claimtidy-api-${{ matrix.region }}" \
-            --image "$IMAGE" --region "${{ matrix.gcp_region }}" --project "${{ vars.GCP_PROJECT }}" \
-            --set-env-vars "REGION=${{ matrix.region }},APP_ORIGIN=${{ vars.APP_ORIGIN }}" \
-            --no-allow-unauthenticated
+          deploy() { # deploy <region> <host> [--primary]
+            echo "::group::$1 ($2)"
+            ssh "$2" "mkdir -p /opt/claimtidy/app && (command -v rsync >/dev/null || (apt-get update -q && apt-get install -yq rsync))"
+            rsync -az --delete --exclude .git --exclude node_modules --exclude .next --exclude dist \
+              --exclude test-results ./ "$2:/opt/claimtidy/app/"
+            ssh "$2" "bash /opt/claimtidy/app/infra/hostinger/setup-server.sh $1 $DOMAIN $3 && bash /opt/claimtidy/app/infra/hostinger/deploy.sh"
+            echo "::endgroup::"
+          }
+          [ -z "$HOST_US" ] || deploy us "$HOST_US"
+          [ -z "$HOST_UK" ] || deploy uk "$HOST_UK"
 
-  directory:
-    name: Deploy account directory (AU)
-    needs: deploy
-    runs-on: ubuntu-latest
-    environment: directory
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Build and deploy the directory to Cloud Run (Sydney)
+      - name: Give the primary the other regions' cards
         run: |
-          IMAGE="australia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/claimtidy/directory:${{ github.sha }}"
-          gcloud auth configure-docker australia-southeast1-docker.pkg.dev --quiet
-          docker build -f Dockerfile.service --build-arg APP=directory -t "$IMAGE" .
-          docker push "$IMAGE"
-          # Secrets (DATABASE_URL, KEY_SECRET, TICKET_SECRET, CODE_SECRET, REGIONS, POSTMARK_TOKEN)
-          # come from Secret Manager; see docs/deploy.md.
-          gcloud run deploy claimtidy-directory \
-            --image "$IMAGE" --region australia-southeast1 --project "${{ vars.GCP_PROJECT }}" \
-            --set-env-vars "APP_ORIGIN=${{ vars.APP_ORIGIN }},MAIL_MODE=postmark,GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }},MICROSOFT_CLIENT_ID=${{ vars.MICROSOFT_CLIENT_ID }}" \
-            --set-secrets "DATABASE_URL=directory-database-url:latest,KEY_SECRET=directory-key-secret:latest,TICKET_SECRET=directory-ticket-secret:latest,CODE_SECRET=directory-code-secret:latest,REGIONS=directory-regions:latest,POSTMARK_TOKEN=postmark-token:latest" \
-            --allow-unauthenticated
+          # Streams server to server through this runner's memory; never printed or stored.
+          ssh "$HOST_AU" "mkdir -p /opt/claimtidy/region-cards && chmod 700 /opt/claimtidy/region-cards"
+          for pair in "us:$HOST_US" "uk:$HOST_UK"; do
+            region="${pair%%:*}"; host="${pair#*:}"
+            [ -n "$host" ] || continue
+            ssh "$host" "cat /opt/claimtidy/region-card.json" \
+              | ssh "$HOST_AU" "umask 077; cat > /opt/claimtidy/region-cards/$region.json"
+          done
+
+      - name: Deploy AU (primary)
+        run: |
+          ssh "$HOST_AU" "mkdir -p /opt/claimtidy/app && (command -v rsync >/dev/null || (apt-get update -q && apt-get install -yq rsync))"
+          rsync -az --delete --exclude .git --exclude node_modules --exclude .next --exclude dist \
+            --exclude test-results ./ "$HOST_AU:/opt/claimtidy/app/"
+          ssh "$HOST_AU" "bash /opt/claimtidy/app/infra/hostinger/setup-server.sh au $DOMAIN --primary && bash /opt/claimtidy/app/infra/hostinger/deploy.sh"

@@ -1,6 +1,6 @@
 # ClaimTidy: Build Plan
 
-_Draft v11, 27 Sep 2026. The product is named **ClaimTidy** (claimtidy.com). v2 to v4, v6 and v7 apply the Codex review; v8 removes Sign in with Apple from R1 and adds Stripe's fees; v9 adds the name and the paid-countries rule; v10 and v11 apply Codex rounds 5 and 6 on billing safety; and v5 applies the product owner's changes: an installable web app instead of app-store apps, receipt-based pricing tiers, and no mileage in Release 1. See the change log at the end. Builds [product-concept.md](product-concept.md) v12. Where the two disagree on *what* the product does, the concept wins; this plan decides *how* and *in what order*._
+_Draft v12, 22 Oct 2026 (v11: 27 Sep 2026). The product is named **ClaimTidy** (claimtidy.com). v2 to v4, v6 and v7 apply the Codex review; v8 removes Sign in with Apple from R1 and adds Stripe's fees; v9 adds the name and the paid-countries rule; v10 and v11 apply Codex rounds 5 and 6 on billing safety; and v5 applies the product owner's changes: an installable web app instead of app-store apps, receipt-based pricing tiers, and no mileage in Release 1. See the change log at the end. Builds [product-concept.md](product-concept.md) v12. Where the two disagree on *what* the product does, the concept wins; this plan decides *how* and *in what order*._
 
 > **Review status (27 Sep 2026):**
 > - **Approved by Codex:** everything except billing (the v8 approval). The later edits (the name, and the paid-countries rule for choosing where to sell) were reviewed in cycle 2.
@@ -31,6 +31,7 @@ Ship **Release 1 (R1): individual mode, end to end**, as an **installable web ap
 | Price | 3 months free, then **Basic $5 AUD** (up to 35 receipts a month) or **Premium $10 AUD** (36 to 200). The tier is **automatic** each month. Above 200, AI reading pauses. Companies pay per employee who claimed, with the same tiers per employee | Product owner; concept section 17 |
 | Payment | Card through Stripe. The app is **open worldwide**, but **paid plans are sold only in "paid countries"**: Australia and the US at launch. Others are added by the owner once the accountant confirms. Countries whose tax must be collected from the first sale (UK, EU, South Korea, Mexico and others) get the free trial only, until the business registers there | Product owner, 27 Sep 2026 |
 | Name | **ClaimTidy**, at **claimtidy.com** | Product owner, 27 Sep 2026 |
+| Hosting | **Hostinger VPS (KVM 2), one per region, running the official self-hosted Supabase plus ClaimTidy's services.** Replaces Supabase cloud and Google Cloud Run. AU users are hosted in **Malaysia** (Hostinger has no Australian VPS), US in Boston, UK in the UK. The owner runs backups and upgrades through the scripts in `infra/hostinger` | Product owner, 22 Oct 2026 |
 | Trial | No card to start. Read-only after the trial until the user subscribes | Product owner |
 | Claim email | Sent by the app with Reply-To set to the user, with attachments. Approval needs designated-approver verification | Concept sections 7 and 15 (Codex-reviewed) |
 | Everything else | As in the concept (v9 was approved by the Codex review; v10 and v11 change pricing, platform and mileage timing only) | `docs/product-concept.md` |
@@ -80,6 +81,8 @@ Ship **Release 1 (R1): individual mode, end to end**, as an **installable web ap
 GPS trip tracking, paying expenses inside the app, languages other than English, and a background screenshot watcher.
 
 ## 4. Architecture
+
+> **Hosting superseded (v12):** the regional stacks now run on Hostinger VPS servers with self-hosted Supabase, and the API, directory and web app run there too, not on Cloud Run. See section 14 and `docs/deploy.md`. Everything else in this section still applies.
 
 ```
  Installable web app (PWA): Next.js + TypeScript, served from one global origin (app shell only, no personal data)
@@ -462,7 +465,7 @@ pnpm e2e:mobile    # Playwright mobile emulation (WebKit iPhone + Chromium Andro
 ## 11. Toolchain and accounts
 
 - **Developer machine:** Node 22, pnpm 9, Docker Desktop (for local Supabase), Supabase CLI, Stripe CLI (for webhooks locally), and Playwright browsers (Chromium and WebKit). Windows works, and no Mac is needed.
-- **Accounts the product owner needs:**
+- **Accounts the product owner needs** (v12: Hostinger replaces Supabase and Google Cloud; see `docs/deploy.md`):
   - Supabase (3 Pro projects), Google Cloud (Cloud Run),
   - Anthropic API, Postmark, **Stripe** (with Stripe Tax),
   - a Google OAuth client and a Microsoft Entra app registration (both free),
@@ -499,6 +502,27 @@ pnpm e2e:mobile    # Playwright mobile emulation (WebKit iPhone + Chromium Andro
 - The offline queue stores image bytes as an ArrayBuffer, not a Blob, because Safari can't keep Blobs in IndexedDB in private browsing.
 - Sign-out forgets the account on the device synchronously before any async cleanup, so closing the app mid sign-out can't reopen it signed in. A stress run found this.
 
+## 14. Hosting change: Hostinger VPS (22 Oct 2026)
+
+The owner chose Hostinger, where they already have an account, over Supabase cloud and Google Cloud.
+
+**What changes:**
+- **Regional stacks:** each region is one Hostinger KVM 2 running the official self-hosted Supabase (pinned to `self-hosted/v0.8.3`) plus the API, behind Caddy (automatic HTTPS).
+  - The AU server is the **primary**: it also runs the account directory (its own `directory` database on that server) and the web app.
+  - Australian data lives in **Malaysia**. The owner accepted this; the privacy policy states it.
+- **Unchanged:** the code, the database schema, the security model, the Auth hooks and the tests. Self-hosted Supabase is the same software.
+- **The API** now verifies ES256 tokens from the region's key set and also accepts legacy HS256 tokens signed with the region's secret.
+- **Deploys:** an SSH and rsync workflow (`.github/workflows/deploy.yml`), and the server scripts in `infra/hostinger` (`setup-server.sh`, `deploy.sh`, `apply-migrations.sh`, `backup.sh`, `restore.sh`). There's no container registry; each server builds its own images.
+- **The owner's operating duties:**
+  - Keep the backup key safe.
+  - Fill `settings.env` on each server.
+  - Turn on Hostinger's own VPS backups where the plan includes them.
+  - Ubuntu security updates are automatic. Supabase upgrades are prepared as reviewed changes.
+- **Rehearsed** on a real self-hosted stack: the full sign-up-to-entry flow over HTTPS, all 150 pgTAP checks, a backup, and a restore drill (`docs/deploy.md`).
+- **Risks added:**
+  - The owner now runs the servers (backups, uptime, upgrades). This is mitigated by the scripts, automatic OS updates, encrypted nightly backups and the restore drill.
+  - One server per region means no automatic failover. Restoring from backup is the recovery plan.
+
 ## Change log
 
 | Version | Change |
@@ -513,3 +537,4 @@ pnpm e2e:mobile    # Playwright mobile emulation (WebKit iPhone + Chromium Andro
 | v9 | Product owner decisions:<br>• **Name:** ClaimTidy (claimtidy.com).<br>• **Paid countries:** a global launch, but subscriptions only where the card and billing country are both on the owner-edited paid list (AU and US at launch). Checked through setup-mode Checkout before any charge; the API creates subscriptions; card changes go through the same check; no-threshold countries (UK, EU and others) get the trial only.<br>• New acceptance cases and an updated M9 gate |
 | v10 | Codex cycle 2, round 5 (the last round; approval pending):<br>• **BP-019:** one subscription per account, with idempotency keys from the Checkout session, a per-account lock, and adoption after uncertain results.<br>• **BP-020:** `default_incomplete`, a pending-payment state, and in-app authentication of the same invoice.<br>• **BP-021:** every card-entry surface is checked; the Portal and Stripe payment-link emails are off; a Radar value-list backstop.<br>• **BP-022:** the owner's own AU turnover monitoring (Stripe excludes the home country), per-country alerts, and quarterly accountant review.<br>• Section 6 items put back in numeric order |
 | v11 | Codex round 6 (an extra round the user authorised):<br>• **BP-019:** a permanent once-only outcome per Checkout session (survives cancellation and Stripe's 24-hour idempotency expiry).<br>• **BP-020:** the server confirms every first payment with the validated card; Stripe.js is limited to `handleNextAction`.<br>• **BP-021:** Radar rules on card country **and** billing country (including a missing one) as the enforcement point on every charge, proven in test mode at M8 |
+| v12 | Product owner: hosting moves to Hostinger VPS with self-hosted Supabase (section 14). AU data in Malaysia |
