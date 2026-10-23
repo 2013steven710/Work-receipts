@@ -64,31 +64,6 @@ importers:
         specifier: ^0.28.2
         version: 0.28.2
 
-  apps/directory:
-    dependencies:
-      '@claimtidy/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      fastify:
-        specifier: ^5.12.5
-        version: 5.12.5
-      jose:
-        specifier: ^6.2.12
-        version: 6.2.12
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
-    devDependencies:
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-      esbuild:
-        specifier: ^0.28.2
-        version: 0.28.2
-
   apps/web:
     dependencies:
       '@claimtidy/core':

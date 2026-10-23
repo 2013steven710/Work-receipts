@@ -3,14 +3,11 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(10);
+select plan(11);
 
 -- The only tables a signed-in user may read (their own rows).
 create temporary table readable (name text primary key) on commit drop;
-insert into readable values
-  ('profiles'), ('categories'), ('form_templates'), ('cards'), ('bank_profiles'), ('statements'),
-  ('statement_lines'), ('claims'), ('entries'), ('claim_versions'), ('approvers'),
-  ('approval_requests'), ('subscriptions');
+insert into readable values ('profiles'), ('approval_requests'), ('subscriptions');
 
 select is_empty($$
   select format('%s.%s %s %s', g.table_schema, g.table_name, g.grantee, g.privilege_type)
@@ -86,6 +83,14 @@ select is_empty($$
   join information_schema.views w using (table_schema, table_name)
   where v.table_schema = 'public' and v.grantee in ('anon', 'authenticated')
 $$, '(d) no views are exposed to client roles');
+
+-- v13: ClaimTidy never stores receipts. No column anywhere may hold receipt content.
+select is_empty($$
+  select format('%s.%s.%s', c.table_schema, c.table_name, c.column_name)
+  from information_schema.columns c
+  where c.table_schema in ('public', 'private')
+    and c.column_name ~* '(image|photo|merchant|supplier|line_item|receipt_data|ai_read|file_path|statement_line|category_id)'
+$$, 'no table holds receipt content (photos, merchants, line items, categories)');
 
 select * from finish();
 rollback;

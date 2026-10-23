@@ -9,8 +9,7 @@ export interface Session {
 export class AuthError extends Error {}
 
 /**
- * Verifies a regional Supabase access token, including the region the directory stamped on it.
- * Asymmetric tokens (ES256/RS256) are checked against the region's published key set; legacy HS256
+ * Verifies a Supabase access token. Asymmetric tokens (ES256/RS256) are checked against the published key set; legacy HS256
  * tokens, which self-hosted Supabase can still issue, against the shared secret when one is set.
  */
 export function createAuthenticator(config: Config) {
@@ -31,7 +30,6 @@ export function createAuthenticator(config: Config) {
         ({ payload } = await jwtVerify(token, jwks, { ...options, algorithms: ["ES256", "RS256"] }));
       }
       if (payload.role !== "authenticated" || typeof payload.sub !== "string") throw new AuthError("bad role");
-      if (payload.hosting_region !== config.REGION) throw new AuthError("wrong region");
       return { userId: payload.sub, email: typeof payload.email === "string" ? payload.email : undefined };
     } catch (error) {
       throw error instanceof AuthError ? error : new AuthError("invalid token");

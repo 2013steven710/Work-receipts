@@ -1,15 +1,22 @@
--- ClaimTidy Release 1 schema (build plan section 5).
+-- ClaimTidy Release 1 schema (build plan sections 5 and 15).
+--
+-- v13: ClaimTidy never stores receipts. Receipt photos and details live on the user's phone and in
+-- their own Google Drive or OneDrive. This database holds only:
+--   * the account (profile settings),
+--   * the subscription (status, invoices, provisioning),
+--   * monthly receipt counts (numbers keyed by a receipt's random ID, no content),
+--   * short-lived approval records (deleted 90 days after the decision) and one-time codes,
+--   * reference data (tax-pack parameters, FX rates, limits, paid countries),
+--   * an append-only audit log of metadata.
 --
 -- Access model:
 --   * Clients (anon, authenticated) can never write to any table. All changes go through the API,
 --     which uses the service role inside server code only.
---   * Signed-in users get SELECT on their own rows in the "user-readable" tables below.
---   * Server-only tables (billing, counters, parameters, audit) are not readable by clients at all.
---   * Secrets (tokens, code verifiers, attempt counters, Stripe identifiers) live in the `private`
---     schema, which is not exposed through the Data API and has no grants for client roles.
+--   * Signed-in users get SELECT on their own rows in the few "user-readable" tables below.
+--   * Server-only tables are not readable by clients at all.
+--   * Secrets (code verifiers, attempt counters, Stripe identifiers) live in the `private` schema,
+--     which is not exposed through the Data API and has no grants for client roles.
 --
--- Every owned table has owner_id (R1: the user). R2 adds workspace_id; the column exists now so
--- R2 adds policies rather than rewriting tables.
 -- Money is integer minor units (bigint) plus an ISO 4217 code. FX rates are decimal strings.
 
 create schema if not exists private;
@@ -46,12 +53,12 @@ $$;
 -- User-readable tables
 -- ---------------------------------------------------------------------------------------------
 
+-- Account settings from the country question. No receipt data.
 create table public.profiles (
   owner_id uuid primary key references auth.users (id) on delete cascade,
   workspace_id uuid,
   country text not null check (country ~ '^[A-Z]{2}$'),
   tax_pack text not null check (tax_pack in ('au', 'us', 'uk', 'generic')),
-  hosting_region text not null check (hosting_region in ('au', 'us', 'uk')),
   home_currency text not null check (home_currency ~ '^[A-Z]{3}$'),
   date_format text not null check (date_format in ('DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD')),
   time_zone text not null,
@@ -61,206 +68,30 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
-create table public.categories (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  name text not null check (length(name) between 1 and 80),
-  icon text,
-  colour text check (colour is null or colour ~ '^#[0-9a-fA-F]{6}$'),
-  sort_order integer not null default 0,
-  archived_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-create index on public.categories (owner_id);
-
-create table public.form_templates (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  kind text not null check (kind in ('personal', 'company_card')),
-  file_path text, -- null means the built-in default form
-  column_mapping jsonb,
-  totals_block jsonb,
-  confirmed_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-create index on public.form_templates (owner_id);
-
-create table public.cards (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  last4 text not null check (last4 ~ '^[0-9]{4}$'),
-  label text,
-  created_at timestamptz not null default now()
-);
-create index on public.cards (owner_id);
-
-create table public.bank_profiles (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  bank_name text not null,
-  header_signature text not null, -- normalised CSV header row, used to recognise the bank next time
-  layout jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (owner_id, header_signature)
-);
-
-create table public.statements (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  card_id uuid not null references public.cards (id) on delete cascade,
-  bank_profile_id uuid references public.bank_profiles (id) on delete set null,
-  period_start date not null,
-  period_end date not null check (period_end >= period_start),
-  currency text not null check (currency ~ '^[A-Z]{3}$'),
-  opening_balance_minor bigint not null,
-  closing_balance_minor bigint not null,
-  file_path text,
-  created_at timestamptz not null default now()
-);
-create index on public.statements (owner_id);
-
-create table public.claims (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  kind text not null check (kind in ('personal', 'company_card')),
-  period_start date not null,
-  period_end date not null check (period_end >= period_start),
-  statement_id uuid references public.statements (id) on delete cascade,
-  status text not null default 'draft'
-    check (status in ('draft', 'submitted', 'approved', 'rejected', 'paid')),
-  final_status_at timestamptz, -- retention clock for submitted material
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  check ((kind = 'company_card') = (statement_id is not null))
-);
-create index on public.claims (owner_id);
--- One personal claim per calendar month (concept section 4).
-create unique index claims_one_personal_per_month on public.claims (owner_id, period_start) where kind = 'personal';
-create unique index claims_one_per_statement on public.claims (statement_id) where kind = 'company_card';
-
-create table public.entries (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  client_uuid uuid not null, -- idempotent offline sync key
-  kind text not null check (kind in ('receipt', 'note')),
-  card_type text not null check (card_type in ('personal', 'company')),
-  category_id uuid references public.categories (id) on delete set null,
-  claim_id uuid references public.claims (id) on delete set null,
-  txn_date date,
-  merchant text,
-  description text,
-  original_amount_minor bigint,
-  original_currency text check (original_currency is null or original_currency ~ '^[A-Z]{3}$'),
-  fx_rate text check (fx_rate is null or fx_rate ~ '^[0-9]+(\.[0-9]+)?$'),
-  home_amount_minor bigint,
-  home_currency text check (home_currency is null or home_currency ~ '^[A-Z]{3}$'),
-  tax_minor bigint,
-  supplier_tax_number text,
-  image_path text,
-  ai_read jsonb,
-  explanation text,
-  explanation_status text check (explanation_status in ('pending', 'accepted', 'rejected')),
-  perceptual_hash text,
-  created_at timestamptz not null default now(), -- retention clock for drafts (created or imported)
-  updated_at timestamptz not null default now(),
-  unique (owner_id, client_uuid)
-);
-create index on public.entries (owner_id, txn_date);
-create index on public.entries (claim_id);
-
-create table public.statement_lines (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  statement_id uuid not null references public.statements (id) on delete cascade,
-  line_no integer not null,
-  posted_date date not null,
-  description text not null,
-  amount_minor bigint not null,
-  line_type text not null check (line_type in ('purchase', 'refund', 'fee', 'payment')),
-  matched_entry_id uuid references public.entries (id) on delete set null,
-  explanation text,
-  explanation_status text check (explanation_status in ('pending', 'accepted', 'rejected')),
-  created_at timestamptz not null default now(),
-  unique (statement_id, line_no)
-);
-create index on public.statement_lines (owner_id);
-
-create table public.claim_versions (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  claim_id uuid not null references public.claims (id) on delete cascade,
-  version integer not null check (version >= 1),
-  xlsx_path text not null,
-  pdf_path text not null,
-  xlsx_sha256 text not null check (xlsx_sha256 ~ '^[0-9a-f]{64}$'),
-  pdf_sha256 text not null check (pdf_sha256 ~ '^[0-9a-f]{64}$'),
-  totals jsonb not null,
-  rates_used jsonb not null,
-  tax_pack_version text not null,
-  status text not null default 'submitted'
-    check (status in ('submitted', 'approved', 'rejected', 'paid', 'superseded')),
-  status_history jsonb not null default '[]'::jsonb,
-  submitted_at timestamptz not null default now(),
-  unique (claim_id, version)
-);
-create index on public.claim_versions (owner_id);
-
--- A submitted version is a frozen snapshot: only its status may change.
-create or replace function private.freeze_claim_version() returns trigger
-language plpgsql set search_path = '' as $$
-begin
-  if (new.owner_id, new.claim_id, new.version, new.xlsx_path, new.pdf_path, new.xlsx_sha256,
-      new.pdf_sha256, new.totals, new.rates_used, new.tax_pack_version, new.submitted_at)
-     is distinct from
-     (old.owner_id, old.claim_id, old.version, old.xlsx_path, old.pdf_path, old.xlsx_sha256,
-      old.pdf_sha256, old.totals, old.rates_used, old.tax_pack_version, old.submitted_at) then
-    raise exception 'claim versions are immutable' using errcode = 'insufficient_privilege';
-  end if;
-  return new;
-end;
-$$;
-create trigger claim_versions_frozen before update on public.claim_versions
-  for each row execute function private.freeze_claim_version();
-
-create table public.approvers (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
-  workspace_id uuid,
-  email text not null check (email ~ '^[^@\s]+@[^@\s]+$'),
-  role text not null check (role in ('to', 'cc')),
-  created_at timestamptz not null default now(),
-  unique (owner_id, email)
-);
--- Exactly one designated approver (To) per owner; finance and others are Cc.
-create unique index approvers_one_to on public.approvers (owner_id) where role = 'to';
-
--- Holds no verification material: tokens, verifiers, expiry and attempts are in private.approval_secrets.
+-- One request per claim sent for approval. Holds no receipts: just enough to show the approver
+-- what they're deciding and tell the claimant the outcome. Deleted 90 days after the decision.
+-- Code verifiers, expiry and attempts are in private.approval_secrets.
 create table public.approval_requests (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users (id) on delete cascade,
   workspace_id uuid,
-  claim_version_id uuid not null references public.claim_versions (id) on delete cascade,
-  approver_email text not null,
+  claim_label text not null check (length(claim_label) between 1 and 120), -- e.g. "Personal claim, Oct 2026"
+  claim_kind text not null check (claim_kind in ('personal', 'company_card')),
+  total_minor bigint not null,
+  currency text not null check (currency ~ '^[A-Z]{3}$'),
+  version integer not null default 1 check (version >= 1),
+  approver_email text not null check (approver_email ~ '^[^@\s]+@[^@\s]+$'),
   decision text not null default 'pending' check (decision in ('pending', 'approved', 'rejected')),
-  comment text,
+  comment text check (length(comment) <= 2000),
   verified_via text check (verified_via in ('email_code')),
   sent_at timestamptz not null default now(),
   viewed_at timestamptz,
-  decided_at timestamptz
+  decided_at timestamptz,
+  paid_at timestamptz,
+  check ((decision = 'pending') = (decided_at is null))
 );
 create index on public.approval_requests (owner_id);
+create index on public.approval_requests (decided_at) where decided_at is not null;
 
 create table public.subscriptions (
   owner_id uuid primary key references auth.users (id) on delete cascade,
@@ -275,16 +106,19 @@ create table public.subscriptions (
 -- Server-only tables (no client access at all)
 -- ---------------------------------------------------------------------------------------------
 
+-- One row per receipt that had an AI read: a count, never content. receipt_id is the random ID
+-- the phone gave the receipt, so retries never count twice.
 create table public.receipt_usage (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users (id) on delete cascade,
-  entry_id uuid not null unique, -- one counted read per entry; no FK so counts survive entry deletion
+  receipt_id uuid not null,
   usage_month date not null check (extract(day from usage_month) = 1),
   read_at timestamptz not null default now(),
   phase text not null check (phase in ('trial', 'paid')),
   counted boolean not null default true,
   uncounted_reason text check (uncounted_reason in ('undo', 'duplicate_deleted')),
-  check (counted or uncounted_reason is not null)
+  check (counted or uncounted_reason is not null),
+  unique (owner_id, receipt_id)
 );
 create index on public.receipt_usage (owner_id, usage_month);
 
@@ -425,8 +259,7 @@ create table private.billing_tombstones (
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles', 'categories', 'form_templates', 'bank_profiles', 'claims',
-                           'entries', 'subscriptions', 'invoices'] loop
+  foreach t in array array['profiles', 'subscriptions', 'invoices'] loop
     execute format('create trigger %I before update on public.%I for each row execute function private.touch_updated_at()',
                    t || '_touch_updated_at', t);
   end loop;
@@ -451,9 +284,7 @@ begin
     execute format('alter table public.%I force row level security', t);
   end loop;
 
-  foreach t in array array['profiles', 'categories', 'form_templates', 'cards', 'bank_profiles',
-                           'statements', 'statement_lines', 'claims', 'entries', 'claim_versions',
-                           'approvers', 'approval_requests', 'subscriptions'] loop
+  foreach t in array array['profiles', 'approval_requests', 'subscriptions'] loop
     execute format('grant select on public.%I to authenticated', t);
     execute format('create policy %I on public.%I for select to authenticated using (owner_id = (select auth.uid()))',
                    'own rows readable', t);
@@ -461,21 +292,4 @@ begin
 end;
 $$;
 
--- ---------------------------------------------------------------------------------------------
--- Storage: private buckets, objects stored under "<owner_id>/...".
--- Clients may read their own objects only. Uploads use short-lived signed upload URLs issued by the
--- API (no overwrite); deletion happens only through the API.
--- ---------------------------------------------------------------------------------------------
-
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
-  ('receipts', 'receipts', false, 20971520, array['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf']),
-  ('claim-packs', 'claim-packs', false, 52428800, array['application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']),
-  ('statements', 'statements', false, 10485760, array['text/csv', 'text/plain', 'application/vnd.ms-excel']),
-  ('templates', 'templates', false, 10485760, array['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'image/jpeg', 'image/png', 'application/pdf'])
-on conflict (id) do nothing;
-
-create policy "own objects readable" on storage.objects for select to authenticated
-  using (
-    bucket_id in ('receipts', 'claim-packs', 'statements', 'templates')
-    and (storage.foldername(name))[1] = (select auth.uid())::text
-  );
+-- No storage buckets: ClaimTidy keeps no files (v13).

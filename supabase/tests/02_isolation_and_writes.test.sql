@@ -13,29 +13,15 @@ insert into auth.users (id, email) values
 do $$
 declare
   u uuid;
-  cat uuid; tpl uuid; crd uuid; bp uuid; st uuid; cl uuid; ccl uuid; en uuid; cv uuid; ar uuid; inv uuid;
+  ar uuid; inv uuid;
 begin
   foreach u in array array['aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'bbbbbbbb-0000-0000-0000-000000000002'::uuid] loop
-    insert into profiles (owner_id, country, tax_pack, hosting_region, home_currency, date_format, time_zone)
-      values (u, 'AU', 'au', 'au', 'AUD', 'DD/MM/YYYY', 'Australia/Sydney');
-    insert into categories (owner_id, name) values (u, 'Taxi') returning id into cat;
-    insert into form_templates (owner_id, kind) values (u, 'personal') returning id into tpl;
-    insert into cards (owner_id, last4) values (u, '4821') returning id into crd;
-    insert into bank_profiles (owner_id, bank_name, header_signature, layout) values (u, 'Bank', 'date,desc,amt', '{}') returning id into bp;
-    insert into statements (owner_id, card_id, bank_profile_id, period_start, period_end, currency, opening_balance_minor, closing_balance_minor)
-      values (u, crd, bp, '2026-09-01', '2026-09-30', 'AUD', 0, 41230) returning id into st;
-    insert into claims (owner_id, kind, period_start, period_end) values (u, 'personal', '2026-09-01', '2026-09-30') returning id into cl;
-    insert into claims (owner_id, kind, period_start, period_end, statement_id) values (u, 'company_card', '2026-09-01', '2026-09-30', st) returning id into ccl;
-    insert into entries (owner_id, client_uuid, kind, card_type, category_id, claim_id, original_amount_minor, original_currency)
-      values (u, gen_random_uuid(), 'receipt', 'personal', cat, cl, 6420, 'AUD') returning id into en;
-    insert into statement_lines (owner_id, statement_id, line_no, posted_date, description, amount_minor, line_type, matched_entry_id)
-      values (u, st, 1, '2026-09-14', 'QANTAS', 41230, 'purchase', en);
-    insert into claim_versions (owner_id, claim_id, version, xlsx_path, pdf_path, xlsx_sha256, pdf_sha256, totals, rates_used, tax_pack_version)
-      values (u, cl, 1, u || '/c.xlsx', u || '/c.pdf', repeat('a', 64), repeat('b', 64), '{}', '{}', 'au-2026.1') returning id into cv;
-    insert into approvers (owner_id, email, role) values (u, 'boss@example.com', 'to');
-    insert into approval_requests (owner_id, claim_version_id, approver_email) values (u, cv, 'boss@example.com') returning id into ar;
+    insert into profiles (owner_id, country, tax_pack, home_currency, date_format, time_zone)
+      values (u, 'AU', 'au', 'AUD', 'DD/MM/YYYY', 'Australia/Sydney');
+    insert into approval_requests (owner_id, claim_label, claim_kind, total_minor, currency, approver_email)
+      values (u, 'Personal claim, Sep 2026', 'personal', 6420, 'AUD', 'boss@example.com') returning id into ar;
     insert into subscriptions (owner_id, status) values (u, 'trialing');
-    insert into receipt_usage (owner_id, entry_id, usage_month, phase) values (u, en, '2026-09-01', 'trial');
+    insert into receipt_usage (owner_id, receipt_id, usage_month, phase) values (u, gen_random_uuid(), '2026-09-01', 'trial');
     insert into usage_months (owner_id, usage_month, trial_count) values (u, '2026-09-01', 1);
     insert into invoices (owner_id, kind, amount_minor, currency, status) values (u, 'subscription', 500, 'AUD', 'paid') returning id into inv;
     insert into billing_provisioning (owner_id) values (u);
@@ -44,18 +30,12 @@ begin
     insert into private.approval_secrets (approval_request_id, view_token_hash, code_verifier) values (ar, 'h', 'v');
     insert into private.stripe_customers (owner_id, stripe_customer_id) values (u, 'cus_' || left(u::text, 8));
     insert into private.stripe_invoice_refs (invoice_id, stripe_invoice_id) values (inv, 'in_' || left(u::text, 8));
-    insert into storage.objects (bucket_id, name) values
-      ('receipts', u || '/r1.jpg'), ('claim-packs', u || '/c.pdf'),
-      ('statements', u || '/s.csv'), ('templates', u || '/t.xlsx');
   end loop;
 end;
 $$;
 
 create temporary table readable (name text primary key);
-insert into readable values
-  ('profiles'), ('categories'), ('form_templates'), ('cards'), ('bank_profiles'), ('statements'),
-  ('statement_lines'), ('claims'), ('entries'), ('claim_versions'), ('approvers'),
-  ('approval_requests'), ('subscriptions');
+insert into readable values ('profiles'), ('approval_requests'), ('subscriptions');
 create temporary table all_tables as
   select tablename::text as name,
          (select a.attname::text from pg_attribute a
@@ -98,7 +78,7 @@ select plan(
   + (select count(*)::int * 4 from all_tables)      -- (b) insert / update / delete / truncate refused
   + (select count(*)::int - (select count(*)::int from readable) from all_tables) -- server-only tables unreadable
   + (select count(*)::int from private_tables)      -- (d) private tables unreadable
-  + 7                                               -- named cases and storage (c)
+  + 5                                               -- named cases and storage (c)
 );
 
 -- ---------------------------------------------------------------------------------------------
@@ -138,25 +118,16 @@ select throws_ok($$update public.approval_requests set decision = 'approved'$$,
 select throws_ok(format('select 1 from private.%I limit 1', name), '42501', null,
                  format('(d) private.%s is not readable', name)) from private_tables;
 
--- (c) Storage: read own objects only; no upload, overwrite or delete through the client.
-select results_eq(
-  $$select name from storage.objects order by name$$,
-  $$values ('aaaaaaaa-0000-0000-0000-000000000001/c.pdf'), ('aaaaaaaa-0000-0000-0000-000000000001/r1.jpg'),
-           ('aaaaaaaa-0000-0000-0000-000000000001/s.csv'), ('aaaaaaaa-0000-0000-0000-000000000001/t.xlsx')$$,
-  '(c) A sees exactly own objects in every bucket'
-);
+-- (c) Storage: ClaimTidy keeps no files, so there are no buckets and clients can't create any.
 select throws_ok(
   $$insert into storage.objects (bucket_id, name) values ('receipts', 'aaaaaaaa-0000-0000-0000-000000000001/new.jpg')$$,
-  '42501', null, '(c) direct upload refused');
-select is(pg_temp.affected($$update storage.objects set metadata = '{"x":1}' where bucket_id = 'receipts'$$),
-          0::bigint, '(c) cannot overwrite own object');
-select ok(pg_temp.refused($$delete from storage.objects where bucket_id = 'receipts'$$),
-          '(c) cannot delete own object');
+  null, null, '(c) no file can be stored through the client');
+select throws_ok(
+  $$insert into storage.buckets (id, name) values ('sneaky', 'sneaky')$$,
+  '42501', null, '(c) clients cannot create a bucket');
 
 reset role;
-select is(
-  (select count(*) from storage.objects where bucket_id = 'receipts' and metadata is null),
-  2::bigint, '(c) objects unchanged afterwards');
+select is((select count(*) from storage.buckets), 0::bigint, '(c) no storage buckets exist');
 
 select * from finish();
 rollback;

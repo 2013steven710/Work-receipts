@@ -4,15 +4,13 @@ import { AuthError, createAuthenticator, type Session } from "./auth.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import { HttpError, registerRoutes } from "./routes.js";
-import type { Storage } from "./storage.js";
 
 export interface Deps {
   config: Config;
   db?: Db;
-  storage?: Storage;
 }
 
-export function buildApp({ config, db, storage }: Deps): FastifyInstance {
+export function buildApp({ config, db }: Deps): FastifyInstance {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test", bodyLimit: 256 * 1024 });
 
   // Cross-origin rule: only the app's own origin may call this API.
@@ -25,20 +23,20 @@ export function buildApp({ config, db, storage }: Deps): FastifyInstance {
     reply.header("Access-Control-Allow-Origin", config.APP_ORIGIN);
     reply.header("Vary", "Origin");
     if (request.method === "OPTIONS") {
-      reply.header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE");
+      reply.header("Access-Control-Allow-Methods", "GET, POST");
       reply.header("Access-Control-Allow-Headers", "authorization, content-type");
       reply.header("Access-Control-Max-Age", "600");
       return reply.code(204).send();
     }
   });
 
-  app.get("/health", async () => ({ ok: true, region: config.REGION }));
+  app.get("/health", async () => ({ ok: true }));
 
-  if (db && storage) {
+  if (db) {
     const authenticate = createAuthenticator(config);
     const session = (request: { headers: { authorization?: string | undefined } }): Promise<Session> =>
       authenticate(request.headers.authorization);
-    registerRoutes(app, { config, db, storage, session });
+    registerRoutes(app, { db, session });
   }
 
   app.setErrorHandler((error, _request, reply) => {

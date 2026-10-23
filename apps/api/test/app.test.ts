@@ -3,18 +3,16 @@ import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 
 const config = loadConfig({
-  REGION: "au",
   APP_ORIGIN: "https://claimtidy.com",
   SUPABASE_URL: "http://127.0.0.1:54321",
-  SUPABASE_SERVICE_KEY: "unused",
   DATABASE_URL: "postgresql://unused",
 });
 
 describe("api", () => {
-  it("reports health and region", async () => {
+  it("reports health", async () => {
     const res = await buildApp({ config }).inject({ method: "GET", url: "/health" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, region: "au" });
+    expect(res.json()).toEqual({ ok: true });
   });
 
   it("allows only the app origin", async () => {
@@ -25,7 +23,7 @@ describe("api", () => {
     expect(bad.statusCode).toBe(403);
   });
 
-  it("rejects an unknown region", () => {
-    expect(() => loadConfig({ ...config, PORT: "1", REGION: "eu" })).toThrow();
+  it("rejects a bad configuration", () => {
+    expect(() => loadConfig({ APP_ORIGIN: "not a url", SUPABASE_URL: "http://x", DATABASE_URL: "x" })).toThrow();
   });
 });
