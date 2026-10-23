@@ -491,23 +491,24 @@ pnpm e2e:mobile    # Playwright mobile emulation (WebKit iPhone + Chromium Andro
 
 | Milestone | Status | Notes |
 |---|---|---|
-| M0 Foundations | **Done locally; hosted parts wait for accounts** | Monorepo (`packages/core`, `apps/api`, `apps/web`) builds. Local Supabase starts. The R1 schema (all section 5 tables, read-only RLS, `private` schema, four storage buckets) is in `supabase/migrations`. `pnpm test:db` runs 150 pgTAP checks for (a)–(d), derived from the catalog so every future table is covered; each check was mutation-tested (a deliberate leak or write grant makes it fail). CI runs lint, typecheck, unit tests, builds and the pgTAP suite on every push. **Waiting on the owner's accounts** (`docs/deploy.md`): the first three-region deploy, and confirming both Auth hooks run on hosted projects |
-| M1 Sign-up and capture | **Done locally, except Google/Microsoft sign-in buttons; hosted parts wait for accounts** | **Directory** (`apps/directory`): email codes, Google/Microsoft ID-token verification, reservations, and both regional Auth hooks, with HMAC keys only. 16 integration tests run against real local Supabase Auth with the hooks enabled: new and returning users, one account per identity, a provider email change, verified-email linking (BP-010), direct sign-up at the wrong region refused (BP-008), and conflicts failing closed. **API**: verified regional sessions, the country question, signed uploads, and idempotent entries with the account check (10 tests). **Web app**: email sign-in, country question, camera or Photos/Files (including PDF), automatic corners with drag-to-adjust and a perspective crop, the category tap (2 taps after the photo), Undo/Edit, a per-account offline queue, Background Sync, the Android share target, and safe sign-out. **E2E** (Playwright, mobile emulation, full local stack): capture, 5 offline captures syncing once across a close mid-sync, account switching (mutation-checked), and share target. Stress-run 24/24. In CI, all four pass on Android (Chromium), and capture and account switching pass on iPhone (WebKit). The iPhone airplane-mode case stays a real-device check, because Playwright's WebKit offline emulation also blocks reading in-memory files, which a real iPhone never does. The share target is Android-only by design. **Not yet:** Google and Microsoft buttons in the app (need the owner's client IDs; the directory side is done and tested with a stand-in key set). Real-device checks (section 9) wait for a hosted deploy |
+| M0 Foundations | **Done; reworked for v13. The first real deploy waits on the owner's settings** | The monorepo (`packages/core`, `apps/api`, `apps/web`) builds. The v13 schema in `supabase/migrations` holds only accounts, subscriptions, receipt counts, approval records and reference data: no receipt content and no storage buckets. Clients are read-only on their own rows. `pnpm test:db` runs the pgTAP suite: privileges derived from the catalog (so every future table is covered), a guard against receipt-content columns, no client storage access, and per-user isolation. CI runs lint, shellcheck, typecheck, unit tests, builds, pgTAP, API integration and the mobile e2e suite on every push. **Hosting** (section 15): one shared Hostinger server, rehearsed end to end (`docs/deploy.md`) |
+| M1 Sign-up and capture | **Done for v13, except real-device checks** | **Sign-in:** Supabase Auth email code (6 digits; the email shows the code, not a link). **API:** the account (`/v1/me`), the country question, and the Google/Microsoft token broker for linking the user's own Drive/OneDrive. The broker adds the app's secret, stores nothing, and only redeems codes for the app's own callback. **Web app:** "Where should we keep your receipts?" (Google Drive, OneDrive, or this phone only after a warning); camera or Photos/Files (including PDF); automatic corners with a perspective crop; the category tap; Undo/Edit. A per-account phone store with sync to `ClaimTidy/Receipts/YYYY-MM/` (photo plus details per receipt, `settings.json`, deletion markers, re-upload of missing cloud copies, reuse of interrupted uploads). The sync status pill; the Android share target; safe sign-out. **E2E** (Playwright, mobile emulation, with a stand-in Google/Microsoft): snap to Google Drive, phone only, restore on a new phone from OneDrive, 5 offline captures across a close mid-sync, account switching, and the share target. Green in CI on Android and iPhone (WebKit) emulation. **Not yet:** real-device checks (section 9), and the owner's Google/Microsoft keys |
 | M2–M9 | Not started | |
 
 **Implementation notes (deviations from the plan text):**
 - pnpm 10 instead of 9, and TypeScript 6.0 (typescript-eslint doesn't support TypeScript 7 yet).
 - The approval status view in section 5 isn't needed: `approval_requests` itself holds no verification material (all of it is in `private.approval_secrets`), and a pgTAP check forbids secret-like columns in every user-readable table.
 - Server-only tables are unreadable by clients, not just unwritable. The app reads counts, tiers and invoice status through the API.
-- Email sign-in uses one code: the directory sends and checks it, then asks the region's admin API for a one-time sign-in token that the app redeems. The user never sees a second code.
-- Provider identities are keyed on issuer + subject. For Microsoft, the issuer contains the tenant ID and the subject is stable per app registration, which meets the plan's requirement for a stable, non-email key. Microsoft emails count as verified only with the `xms_edov` claim.
-- The custom access token hook also refuses password sessions (R1 has no passwords), and treats a just-redeemed email token as proof of the email, because Supabase issues the first session before it records the confirmation.
+- (v12, removed in v13 with the directory and hooks: the directory's single email code, identities keyed on issuer + subject, and the access token hook refusing password sessions.)
+- v13: Google/Microsoft are only for linking storage, not for signing in (R1 sign-in is the email code). Linking is per account on the phone; the refresh token stays on the phone.
 - The web app builds with webpack, not Turbopack, so the shared packages' `.js` import suffixes resolve.
 - Playwright is pinned to 1.56.1 to match this environment's Chromium. CI installs its own browsers, including WebKit for the iPhone project.
 - The offline queue stores image bytes as an ArrayBuffer, not a Blob, because Safari can't keep Blobs in IndexedDB in private browsing.
 - Sign-out forgets the account on the device synchronously before any async cleanup, so closing the app mid sign-out can't reopen it signed in. A stress run found this.
 
 ## 14. Hosting change: Hostinger VPS (22 Oct 2026)
+
+_Superseded on 23 Oct 2026 by section 15 (one shared server, no regions, no directory). Kept as the record of the v12 design._
 
 The owner chose Hostinger, where they already have an account, over Supabase cloud and Google Cloud.
 
@@ -566,6 +567,24 @@ The owner chose Hostinger, where they already have an account, over Supabase clo
 - **M5** keeps server-side approval records.
 - **M8** (billing) is unchanged, except that receipt counts come from AI reads.
 - **Retention (6.7)** no longer applies to receipts.
+
+**Hosting, as built (23 Oct 2026):**
+- **Isolation:** one Docker Compose project `claimtidy` (containers `claimtidy-*`) in `/opt/claimtidy`, with:
+  - memory and CPU caps, and half CPU priority;
+  - capped logs;
+  - no firewall or SSH changes (`--harden` exists for a dedicated server only).
+- **Web traffic:** if ports 80/443 are free, ClaimTidy's Caddy serves them with automatic HTTPS. Otherwise it listens privately (`127.0.0.1:18080`, or Docker's host address for a containerised proxy) and the existing web server forwards `claimtidy.com`, `www`, `api` and `auth` to it.
+- **Supabase:** only the database, Auth, PostgREST, meta, Studio and the gateway run. Storage, realtime, functions, imgproxy and the pooler are off. The dashboard is reachable only through an SSH tunnel.
+- **Backups:** nightly, the database only, streamed into age encryption.
+- **Restores:**
+  - only ClaimTidy's services stop;
+  - the table permissions come back exactly as they were;
+  - a restore that would let client roles write is refused.
+- **Rehearsed** next to stand-in apps on ports 80, 3000, 5432, 8000 and 8080, which were never restarted. The rehearsal fixed four bugs:
+  - the API refused empty provider keys;
+  - backups stopped silently on a missing optional setting;
+  - a restore widened table permissions;
+  - deploys didn't reload Caddy.
 
 **Privacy policy:**
 - ClaimTidy holds account and subscription data on a server in Malaysia.

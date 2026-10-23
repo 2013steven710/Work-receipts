@@ -1,8 +1,8 @@
 name: Deploy
 
-# Deploys ClaimTidy to the Hostinger VPS servers (docs/deploy.md). Manual: Actions → Deploy → Run.
-# Regions without a host variable are skipped, so this works with just the AU server to begin with.
-# Order: US and UK first, then their connection cards go to the primary (AU), which deploys last.
+# Deploys ClaimTidy to the Hostinger VPS (docs/deploy.md). Manual: Actions → Deploy → Run workflow.
+# One server, shared with other apps: everything goes into /opt/claimtidy and ClaimTidy's own
+# containers (claimtidy-*); nothing else on the server is touched.
 on:
   workflow_dispatch:
 
@@ -19,16 +19,14 @@ jobs:
       contents: read
     env:
       DOMAIN: ${{ vars.CLAIMTIDY_DOMAIN }}
-      HOST_AU: ${{ vars.HOST_AU }}
-      HOST_US: ${{ vars.HOST_US }}
-      HOST_UK: ${{ vars.HOST_UK }}
+      HOST: ${{ vars.CLAIMTIDY_HOST }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Check settings
         run: |
           [ -n "$DOMAIN" ] || { echo "Set the repository variable CLAIMTIDY_DOMAIN (e.g. claimtidy.com)"; exit 1; }
-          [ -n "$HOST_AU" ] || { echo "Set the repository variable HOST_AU (the AU server's IP address)"; exit 1; }
+          [ -n "$HOST" ] || { echo "Set the repository variable CLAIMTIDY_HOST (the server's IP address)"; exit 1; }
 
       - name: SSH key
         env:
@@ -38,38 +36,16 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # Pin the servers' host keys when provided; otherwise trust them on first use.
+          # Pin the server's host key when provided; otherwise trust it on first use.
           if [ -n "$KNOWN_HOSTS" ]; then printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts; fi
           printf 'Host *\n  User root\n  StrictHostKeyChecking %s\n  ServerAliveInterval 30\n' \
             "$([ -n "$KNOWN_HOSTS" ] && echo yes || echo accept-new)" > ~/.ssh/config
 
-      - name: Deploy US and UK
+      - name: Copy the app
         run: |
-          deploy() { # deploy <region> <host> [--primary]
-            echo "::group::$1 ($2)"
-            ssh "$2" "mkdir -p /opt/claimtidy/app && (command -v rsync >/dev/null || (apt-get update -q && apt-get install -yq rsync))"
-            rsync -az --delete --exclude .git --exclude node_modules --exclude .next --exclude dist \
-              --exclude test-results ./ "$2:/opt/claimtidy/app/"
-            ssh "$2" "bash /opt/claimtidy/app/infra/hostinger/setup-server.sh $1 $DOMAIN $3 && bash /opt/claimtidy/app/infra/hostinger/deploy.sh"
-            echo "::endgroup::"
-          }
-          [ -z "$HOST_US" ] || deploy us "$HOST_US"
-          [ -z "$HOST_UK" ] || deploy uk "$HOST_UK"
-
-      - name: Give the primary the other regions' cards
-        run: |
-          # Streams server to server through this runner's memory; never printed or stored.
-          ssh "$HOST_AU" "mkdir -p /opt/claimtidy/region-cards && chmod 700 /opt/claimtidy/region-cards"
-          for pair in "us:$HOST_US" "uk:$HOST_UK"; do
-            region="${pair%%:*}"; host="${pair#*:}"
-            [ -n "$host" ] || continue
-            ssh "$host" "cat /opt/claimtidy/region-card.json" \
-              | ssh "$HOST_AU" "umask 077; cat > /opt/claimtidy/region-cards/$region.json"
-          done
-
-      - name: Deploy AU (primary)
-        run: |
-          ssh "$HOST_AU" "mkdir -p /opt/claimtidy/app && (command -v rsync >/dev/null || (apt-get update -q && apt-get install -yq rsync))"
+          ssh "$HOST" "mkdir -p /opt/claimtidy/app && chmod 700 /opt/claimtidy && (command -v rsync >/dev/null || (apt-get update -q && apt-get install -yq rsync))"
           rsync -az --delete --exclude .git --exclude node_modules --exclude .next --exclude dist \
-            --exclude test-results ./ "$HOST_AU:/opt/claimtidy/app/"
-          ssh "$HOST_AU" "bash /opt/claimtidy/app/infra/hostinger/setup-server.sh au $DOMAIN --primary && bash /opt/claimtidy/app/infra/hostinger/deploy.sh"
+            --exclude test-results ./ "$HOST:/opt/claimtidy/app/"
+
+      - name: Set up and deploy
+        run: ssh "$HOST" "bash /opt/claimtidy/app/infra/hostinger/setup-server.sh $DOMAIN && bash /opt/claimtidy/app/infra/hostinger/deploy.sh"

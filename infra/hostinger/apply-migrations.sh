@@ -4,7 +4,7 @@
 #   apply-migrations.sh [migrations dir]
 set -euo pipefail
 DIR="${1:-/opt/claimtidy/app/supabase/migrations}"
-DB_CONTAINER="${DB_CONTAINER:-supabase-db}"
+DB_CONTAINER="${DB_CONTAINER:-claimtidy-db}"
 PASSWORD="$(grep -E '^POSTGRES_PASSWORD=' /opt/claimtidy/supabase/.env | tail -n1 | cut -d= -f2- | sed -e "s/^'//" -e "s/'$//")"
 
 psql_db() { docker exec -i -e PGPASSWORD="$PASSWORD" "$DB_CONTAINER" psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"; }

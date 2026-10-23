@@ -25,5 +25,6 @@ const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return ConfigSchema.parse(env);
+  // An empty variable means "not set" (compose passes `${NAME:-}` through as an empty string).
+  return ConfigSchema.parse(Object.fromEntries(Object.entries(env).filter(([, value]) => value !== "")));
 }

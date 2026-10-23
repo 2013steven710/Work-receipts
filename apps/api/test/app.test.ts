@@ -26,4 +26,10 @@ describe("api", () => {
   it("rejects a bad configuration", () => {
     expect(() => loadConfig({ APP_ORIGIN: "not a url", SUPABASE_URL: "http://x", DATABASE_URL: "x" })).toThrow();
   });
+
+  it("treats empty variables as unset", () => {
+    const empty = loadConfig({ APP_ORIGIN: "https://claimtidy.com", SUPABASE_URL: "http://x", DATABASE_URL: "x", GOOGLE_CLIENT_ID: "", MICROSOFT_CLIENT_SECRET: "" });
+    expect(empty.GOOGLE_CLIENT_ID).toBeUndefined();
+    expect(empty.MICROSOFT_CLIENT_SECRET).toBeUndefined();
+  });
 });
