@@ -1,6 +1,6 @@
 # ClaimTidy: Product Concept
 
-_Draft v12, 27 Sep 2026. The product is named **ClaimTidy** (claimtidy.com); v12 adds the name and the paid-countries rule._
+_Draft v13, 23 Oct 2026 (v12: 27 Sep 2026). The product is named **ClaimTidy** (claimtidy.com). v13: receipts live with the user, never with us, and everything runs on one server._
 
 > **Status (27 Sep 2026):** the concept is **confirmed** and ready to build from.
 > - **Reviewed:** Codex independently approved the product design (v9). Codex also reviewed the pricing, platform and paid-country rules (v10–v12) as part of the build-plan review.
@@ -11,6 +11,30 @@ _Draft v12, 27 Sep 2026. The product is named **ClaimTidy** (claimtidy.com); v12
 >   - Paid plans are sold in Australia and the US at launch.
 >
 > The build order is in [build-plan.md](build-plan.md). Nothing is built yet.
+
+> **v13 decisions (23 Oct 2026). These override anything below that disagrees.**
+>
+> 1. **ClaimTidy never stores receipts.** Receipt photos and receipt details (date, shop, amount, category, card), claim forms, card statements, categories and approvers live:
+>    - **on the user's phone**, and
+>    - **in the user's own Google Drive or OneDrive** (a "ClaimTidy" folder the app creates; it can see only the files it made).
+>
+>    Users without Google or Microsoft keep everything **on the phone only**, after a clear warning that a lost phone means lost receipts. iCloud isn't possible: Apple gives web apps no way to save there.
+> 2. **The phone does the work:** it builds the claim spreadsheet and the receipts PDF, finds duplicates, matches card statements, and restores from Drive on a new device.
+> 3. **The server keeps only the account and the subscription**, plus three things that hold no receipt content:
+>    - the number of receipts read each month (pricing tiers),
+>    - a short record of each approval (approver, claim total, decision, time), deleted 90 days after the decision,
+>    - one-time approval codes while a claim waits.
+>
+>    Photos sent for the AI read, and the claim email to the manager, pass **through** the server and are never kept.
+> 4. **One server for everyone:** the owner's existing Hostinger KVM 2 in Kuala Lumpur, alongside their other apps, which ClaimTidy must not affect.
+>    - There are no hosting regions and no account directory.
+>    - The profile country still sets tax rules, currency, dates and holidays.
+> 5. **Superseded:**
+>    - the regional hosting promise,
+>    - the 6-month retention rule (users keep their own files),
+>    - "the app owner can delete any receipt" (there are none to delete),
+>    - "app cloud" storage (section 14),
+>    - storage choice for companies (R2 will use the company's Microsoft 365 or Google storage).
 
 _History: v7 to v9 apply the independent plan review (see "Changes from review" at the end). v10 added pricing. v11 makes the first release an installable web app, adds receipt-based pricing tiers, and moves mileage to a later release. The build order is in [build-plan.md](build-plan.md)._
 
@@ -37,13 +61,13 @@ Open the app, snap the receipt, tap a category. The receipt lands in your claim 
 | Connectivity | Works **online and offline**. Offline, receipts are saved now and synced later. |
 | Who uses it | **Individuals** (one person claiming from their employer) and **companies** (sized for about **50–100 employees**) |
 | Sign-in | **Microsoft, Google, Apple or email.** The first release (the web app) offers Microsoft, Google and email; Apple comes with the native apps. Every workflow works without Microsoft 365. Microsoft 365 single sign-on, Outlook sending and manager lookup are **optional integrations** for companies that use it. |
-| Image storage | **Optional; the user chooses:** app cloud (default), Microsoft 365 (OneDrive/SharePoint), Google Drive, or phone only. **Phone only** means images and forms are never *stored* off the phone. The AI read and route lookup still process data briefly, which is disclosed up front (section 14). |
+| Image storage | **v13: the user's own Google Drive or OneDrive, plus the phone; phone only for users without either.** ClaimTidy keeps no receipts. The AI read and the claim email pass through briefly, which is disclosed up front. |
 | Mileage | **Planned for a later release** (not the first release), in a simple form: trip entry and route distance. **No live GPS tracking.** |
 | Approval | One email, **To: manager, Cc: finance**, **sent by the app** from its own address with Reply-To set to the employee (Outlook sending is optional for Microsoft 365 companies). The **manager approves both forms** (personal and company card), then **finance pays by bank transfer outside the app**. |
 | Cards | **Personal cards (reimbursed)** and **company cards (every purchase line on the statement must be matched to a receipt or an approved explanation)** |
 | Card statements | **CSV download from any bank.** The format differs by bank, so the app learns each bank's layout. **The company-card reconciliation covers one statement period per card**, not a calendar month. |
 | Cost centre / project | **Not required.** Optional field, off by default. |
-| Retention | **6 months** by default. **The app owner (you, the platform owner) can change this and can delete any receipt at any time**, in app cloud storage directly and in customer storage where permission was given. The finance manager sees everyone's claims. |
+| Retention | **v13: users keep their own files as long as they like.** ClaimTidy holds no receipts. Approval records are deleted 90 days after the decision. (Superseded: 6-month retention, and the owner deleting receipts.) |
 | Reminder | Sent on the **3rd business day of the new month** if last month has unsubmitted claimable entries (receipts, trips or receipt-free notes) or open company-card statement lines. |
 
 ## 0. Sign-up and first questions

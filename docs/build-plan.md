@@ -1,6 +1,6 @@
 # ClaimTidy: Build Plan
 
-_Draft v12, 22 Oct 2026 (v11: 27 Sep 2026). The product is named **ClaimTidy** (claimtidy.com). v2 to v4, v6 and v7 apply the Codex review; v8 removes Sign in with Apple from R1 and adds Stripe's fees; v9 adds the name and the paid-countries rule; v10 and v11 apply Codex rounds 5 and 6 on billing safety; and v5 applies the product owner's changes: an installable web app instead of app-store apps, receipt-based pricing tiers, and no mileage in Release 1. See the change log at the end. Builds [product-concept.md](product-concept.md) v12. Where the two disagree on *what* the product does, the concept wins; this plan decides *how* and *in what order*._
+_Draft v13, 23 Oct 2026 (v12: 22 Oct 2026; v11: 27 Sep 2026). The product is named **ClaimTidy** (claimtidy.com). v2 to v4, v6 and v7 apply the Codex review; v8 removes Sign in with Apple from R1 and adds Stripe's fees; v9 adds the name and the paid-countries rule; v10 and v11 apply Codex rounds 5 and 6 on billing safety; and v5 applies the product owner's changes: an installable web app instead of app-store apps, receipt-based pricing tiers, and no mileage in Release 1. See the change log at the end. Builds [product-concept.md](product-concept.md) v12. Where the two disagree on *what* the product does, the concept wins; this plan decides *how* and *in what order*._
 
 > **Review status (27 Sep 2026):**
 > - **Approved by Codex:** everything except billing (the v8 approval). The later edits (the name, and the paid-countries rule for choosing where to sell) were reviewed in cycle 2.
@@ -8,6 +8,11 @@ _Draft v12, 22 Oct 2026 (v11: 27 Sep 2026). The product is named **ClaimTidy** (
 >   - This covers first-payment confirmation, retries, one subscription per account, Radar country rules, and the once-only outcome per Checkout session.
 >   - M0–M7 don't depend on billing.
 > - **Building started on 6 Oct 2026** with the owner's go-ahead. Progress is tracked in section 13.
+
+> **v13 (23 Oct 2026), from the product owner. Overrides the sections below where they disagree; see section 15 for the details:**
+> - **No receipt data on the server.** Receipts live on the phone and in the user's own Google Drive or OneDrive; the phone builds the claim pack.
+> - **One server**, the owner's existing KVM 2 in Kuala Lumpur, shared with other apps. No regions, no account directory, no Auth hooks.
+> - **Sign-in** is Supabase's own email code, Google or Microsoft.
 
 ## 1. Goal
 
@@ -523,6 +528,51 @@ The owner chose Hostinger, where they already have an account, over Supabase clo
   - The owner now runs the servers (backups, uptime, upgrades). This is mitigated by the scripts, automatic OS updates, encrypted nightly backups and the restore drill.
   - One server per region means no automatic failover. Restoring from backup is the recovery plan.
 
+## 15. v13: receipts stay with the user, one server (23 Oct 2026)
+
+**Decisions** (product owner, 23 Oct 2026):
+
+1. **Storage.**
+   - Each user keeps their receipts on the phone and in their own **Google Drive** (`drive.file` scope: the app sees only files it created) or **OneDrive** (`Files.ReadWrite.AppFolder`: the app's own folder).
+   - Users with neither keep them **on the phone only**, after a warning.
+   - Linking Drive or OneDrive is separate from signing in, so an email-code user can link a Google Drive too.
+2. **What the server keeps:**
+   - **account:** auth user, profile (country, currency, date format, time zone, trial start);
+   - **subscription:** Stripe status, invoices, provisioning;
+   - **monthly receipt counts:** numbers only, keyed by the receipt's random ID, with no content;
+   - **approval records:** approver email, claim label and total, decision, times; deleted 90 days after the decision;
+   - **one-time approval codes;**
+   - **reference data:** tax-pack parameters, FX rates, limits, paid countries;
+   - **the audit log:** metadata only.
+
+   Nothing else. Photos sent for the AI read and the claim email pass through and aren't kept.
+3. **One server:** the owner's KVM 2 in Kuala Lumpur, shared with their other apps.
+   - ClaimTidy runs in its own Docker project with its own names, network, memory and CPU limits and log limits.
+   - It makes no firewall or SSH changes.
+   - Its web addresses go through the server's existing web entry point.
+4. **Removed:** hosting regions, the account directory, the Auth hooks, Supabase Storage (buckets and file uploads), the server-side receipt tables, and the server's receipt backups.
+
+**How the phone stores receipts:**
+- **On the phone:** IndexedDB per account holds each receipt as one record (photo bytes plus details), as M1 already does.
+- **In the cloud:** each receipt is two files in `ClaimTidy/Receipts/<YYYY-MM>/`, the photo and a small JSON file with its details. Settings (categories, card, approvers) are one `settings.json` file.
+  - One file per receipt means two devices never edit the same file, so there's nothing to merge.
+  - A receipt deleted on one device disappears from the others at their next sync.
+- **On a new device:** linking the same Drive or OneDrive downloads the details first, then photos as they're needed.
+- **The claim pack** (`.xlsx` plus the receipts PDF) is built on the phone with ExcelJS and pdf-lib (the same libraries, run in the browser). It's saved to the user's Drive and sent through the server's mail relay.
+
+**What changes in the milestones:**
+- **M1** is reworked: no server uploads; the phone store plus Drive/OneDrive sync; a "Where should we keep your receipts?" screen.
+- **M2–M7** run their receipt logic on the phone.
+- **M5** keeps server-side approval records.
+- **M8** (billing) is unchanged, except that receipt counts come from AI reads.
+- **Retention (6.7)** no longer applies to receipts.
+
+**Privacy policy:**
+- ClaimTidy holds account and subscription data on a server in Malaysia.
+- Receipts stay in the user's own storage.
+- The AI read sends the photo to the AI provider (Anthropic) for processing.
+- UK users get the standard international-transfer wording, confirmed by an adviser before launch.
+
 ## Change log
 
 | Version | Change |
@@ -538,3 +588,4 @@ The owner chose Hostinger, where they already have an account, over Supabase clo
 | v10 | Codex cycle 2, round 5 (the last round; approval pending):<br>• **BP-019:** one subscription per account, with idempotency keys from the Checkout session, a per-account lock, and adoption after uncertain results.<br>• **BP-020:** `default_incomplete`, a pending-payment state, and in-app authentication of the same invoice.<br>• **BP-021:** every card-entry surface is checked; the Portal and Stripe payment-link emails are off; a Radar value-list backstop.<br>• **BP-022:** the owner's own AU turnover monitoring (Stripe excludes the home country), per-country alerts, and quarterly accountant review.<br>• Section 6 items put back in numeric order |
 | v11 | Codex round 6 (an extra round the user authorised):<br>• **BP-019:** a permanent once-only outcome per Checkout session (survives cancellation and Stripe's 24-hour idempotency expiry).<br>• **BP-020:** the server confirms every first payment with the validated card; Stripe.js is limited to `handleNextAction`.<br>• **BP-021:** Radar rules on card country **and** billing country (including a missing one) as the enforcement point on every charge, proven in test mode at M8 |
 | v12 | Product owner: hosting moves to Hostinger VPS with self-hosted Supabase (section 14). AU data in Malaysia |
+| v13 | Product owner: receipts live on the phone and in the user's own Google Drive/OneDrive; the server keeps only the account, subscription, receipt counts and short-lived approval records; one shared server; no regions or directory (section 15) |
