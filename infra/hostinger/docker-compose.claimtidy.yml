@@ -8,7 +8,8 @@
 #     load the server's other apps come first;
 #   * log files capped at 3 x 10 MB per container;
 #   * nothing listens publicly except Caddy, and only when ports 80/443 were free. Otherwise
-#     Caddy listens on 127.0.0.1:18080 and the server's existing web proxy forwards to it.
+#     Caddy listens on 127.0.0.1:18080 and the server's existing web proxy forwards to it
+#     (a Traefik that follows Docker labels finds it through the labels below).
 
 name: claimtidy
 
@@ -131,6 +132,16 @@ services:
     ports:
       - "${CLAIMTIDY_HTTP_BIND}:80"
       - "${CLAIMTIDY_HTTPS_BIND}:443"
+    # "traefik" mode: the server's Traefik routes ClaimTidy's domains here and gets the certificates,
+    # the same way the server's other apps join it. In the other modes Traefik ignores this container.
+    labels:
+      traefik.enable: ${CLAIMTIDY_TRAEFIK_ENABLE:-false}
+      traefik.docker.network: claimtidy_default
+      traefik.http.routers.claimtidy.rule: ${CLAIMTIDY_TRAEFIK_RULE:-}
+      traefik.http.routers.claimtidy.entrypoints: ${CLAIMTIDY_TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.claimtidy.tls: "true"
+      traefik.http.routers.claimtidy.tls.certresolver: ${CLAIMTIDY_TRAEFIK_CERTRESOLVER:-}
+      traefik.http.services.claimtidy.loadbalancer.server.port: "80"
     volumes:
       - /opt/claimtidy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

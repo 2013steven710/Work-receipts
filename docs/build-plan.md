@@ -573,7 +573,7 @@ The owner chose Hostinger, where they already have an account, over Supabase clo
   - memory and CPU caps, and half CPU priority;
   - capped logs;
   - no firewall or SSH changes (`--harden` exists for a dedicated server only).
-- **Web traffic:** if ports 80/443 are free, ClaimTidy's Caddy serves them with automatic HTTPS. Otherwise it listens privately (`127.0.0.1:18080`, or Docker's host address for a containerised proxy) and the existing web server forwards `claimtidy.com`, `www`, `api` and `auth` to it.
+- **Web traffic:** on the owner's server, Hostinger's Traefik has 80/443, and ClaimTidy joins it with Docker labels (entry point and certificate resolver detected from Traefik itself). If ports 80/443 are free, ClaimTidy's Caddy serves them with automatic HTTPS. With any other web server, it listens privately (`127.0.0.1:18080`, or Docker's host address for a containerised proxy) and the existing web server forwards `claimtidy.com`, `www`, `api` and `auth` to it.
 - **Supabase:** only the database, Auth, PostgREST, meta, Studio and the gateway run. Storage, realtime, functions, imgproxy and the pooler are off. The dashboard is reachable only through an SSH tunnel.
 - **Backups:** nightly, the database only, streamed into age encryption.
 - **Restores:**

@@ -18,9 +18,15 @@ ClaimTidy runs on **your existing Hostinger KVM 2** (Kuala Lumpur, Malaysia), ne
 | Capped logs | 3 × 10 MB per container. |
 | Disk | About 5 GB of images, plus the database (small: no receipts). Your server has about 75 GB free. |
 
-### Web traffic: two modes
-On the first deploy, the setup script checks whether something already uses ports 80/443:
+### Web traffic: three modes
+On the first deploy, the setup script checks what already uses ports 80/443:
 
+- **`traefik` (your server, 23 Oct 2026):** your server's Traefik (from Hostinger's Docker Manager) has 80/443 and picks up apps by their Docker labels. ClaimTidy joins it the same way Buzz does:
+  - the setup script reads Traefik's HTTPS entry point (`websecure`) and certificate resolver (`letsencrypt`) from Traefik itself;
+  - it then puts matching labels on ClaimTidy's Caddy;
+  - Traefik gets the certificates and redirects `http://` to `https://`.
+
+  Nothing in Traefik's own setup or in your other apps changes, and there's no manual step.
 - **`caddy` (ports were free):** ClaimTidy's own Caddy answers on 80/443 for ClaimTidy's domains only, with automatic HTTPS certificates.
 - **`external` (another web server already has 80/443, for example one of your apps' proxies):** ClaimTidy's Caddy listens on `127.0.0.1:18080` only, and your existing web server forwards ClaimTidy's domains to it (step 6 below). Your existing web server keeps handling HTTPS.
 
@@ -49,6 +55,8 @@ In hPanel → VPS → **SSH keys**, add the contents of `claimtidy-deploy.pub`. 
 
 ### 2. The domain
 At your domain registrar, add **A records** pointing to the server's IP address (`187.127.124.225`): `@`, `www`, `api` and `auth`.
+
+Do this **before the first deploy**, and wait until the records work (`nslookup api.claimtidy.com` shows the IP). Traefik asks Let's Encrypt for the certificates as soon as ClaimTidy starts. Let's Encrypt only allows a few failed attempts per hour, so it's better if the first attempt succeeds.
 
 ### 3. GitHub
 In the repository's **Settings → Environments**, create an environment called `production` and add:
@@ -106,7 +114,7 @@ Then run the Deploy workflow again.
 5. Under **Certificates & secrets**, create a client secret. Note when it expires.
 
 ### 6. Only in `external` mode: forward ClaimTidy's domains
-Check which mode you got: `grep CLAIMTIDY_PROXY /opt/claimtidy/settings.env`. If it says `external`, add ClaimTidy's four domains to the web server that already owns ports 80/443, forwarding them to `http://127.0.0.1:18080` with the original host name. That web server also issues the HTTPS certificates for them.
+Check which mode you got: `grep CLAIMTIDY_PROXY /opt/claimtidy/settings.env`. On your server it should say `traefik`, and then there's nothing to do here. If it says `external`, add ClaimTidy's four domains to the web server that already owns ports 80/443, forwarding them to `http://127.0.0.1:18080` with the original host name. That web server also issues the HTTPS certificates for them.
 
 nginx:
 
@@ -201,7 +209,12 @@ The script:
 
 The real scripts ran against a real self-hosted Supabase (release `self-hosted/v0.8.3`). Stand-in "other apps" ran alongside: a web server holding port 80, and an app holding ports 3000, 5432, 8000 and 8080.
 
-- **Both web traffic modes.**
+- **All three web traffic modes.**
+  - `traefik`: a Traefik started with exactly your server's settings (host network, Docker labels, `websecure`, `letsencrypt`, the `http://` redirect), with a stand-in Buzz joined by the same labels as your real one.
+    - The first setup detected it and copied its entry point and certificate resolver.
+    - ClaimTidy's four addresses, the `www` redirect and users' real IP addresses all worked through it.
+    - Buzz kept working.
+    - The test used the current `traefik:latest` (3.7). Older Traefik releases can't talk to the newest Docker, which is worth knowing if Hostinger ever pins an old one.
   - `external` was detected automatically, and traffic was forwarded by the other app's web server. This worked both with that web server on the host and with it inside a Docker container (`CLAIMTIDY_BIND_ADDRESS='172.17.0.1'`). A public bind address is refused.
   - `caddy` used local test certificates; `www` and `http://` redirect to `https://`.
 - **Sign-in:** a 6-digit code by email (subject "Your ClaimTidy code"), then the code exchanged for a session. Supabase's one-code-per-minute limit held.
