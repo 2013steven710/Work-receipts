@@ -2,7 +2,8 @@
 // from migrations, then run the pgTAP suite in supabase/tests.
 import { execFileSync } from "node:child_process";
 
-const EXCLUDE = "studio,imgproxy,vector,logflare,edge-runtime,realtime,supavisor,mailpit,postgres-meta";
+// Mailpit stays on: it receives the sign-in code emails in the end-to-end tests.
+const EXCLUDE = "studio,imgproxy,vector,logflare,edge-runtime,realtime,supavisor,postgres-meta";
 const run = (args) => execFileSync("pnpm", ["exec", "supabase", ...args], { stdio: "inherit" });
 
 run(["start", "-x", EXCLUDE]);

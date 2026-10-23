@@ -1,9 +1,8 @@
 /// <reference lib="webworker" />
-// The service worker: offline app shell, and Android Background Sync of queued captures.
-// Built to public/sw.js by scripts/build-sw.mjs. It never caches personal data.
-import { loadSession } from "../lib/queue";
+// The service worker: the offline app shell and the Android share target. Syncing with the user's
+// Drive/OneDrive happens in the open app. Built to public/sw.js by scripts/build-sw.mjs. It never
+// caches personal data.
 import { putShared } from "../lib/shared";
-import { syncQueue } from "../lib/sync";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -57,29 +56,6 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
-
-interface SyncEvent extends ExtendableEvent {
-  readonly tag: string;
-}
-
-self.addEventListener("sync", (event) => {
-  const e = event as SyncEvent;
-  if (e.tag === "claimtidy-sync") e.waitUntil(backgroundSync());
-});
-
-async function backgroundSync(): Promise<void> {
-  // An open app syncs with its live session; the worker only acts when the app is closed.
-  const windows = await self.clients.matchAll({ type: "window" });
-  if (windows.length > 0) {
-    for (const w of windows) w.postMessage({ type: "claimtidy-sync" });
-    return;
-  }
-  const session = await loadSession();
-  if (!session || session.expiresAt * 1000 < Date.now() + 30_000) return;
-  const result = await syncQueue({ ...session, accessToken: async () => session.accessToken });
-  // Ask the browser to try again later if we were cut off.
-  if (result.remaining > 0 && result.stoppedBecause === "offline") throw new Error("retry later");
-}
 
 // Android share sheet → "ClaimTidy": keep the file, then open the app to categorise it.
 async function receiveShare(req: Request): Promise<Response> {

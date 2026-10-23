@@ -1,294 +1,248 @@
 "use client";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { clearSession, Queue, type QueuedItem, saveSession } from "../../lib/queue";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CloudKind } from "../../lib/cloud/drive";
+import { driveFor, finishLink, startLink } from "../../lib/cloud/link";
+import { syncCloud } from "../../lib/cloudsync";
 import { takeShared } from "../../lib/shared";
-import {
-  api,
-  ApiError,
-  apiUrl,
-  clearRegionInfo,
-  directory,
-  forgetClient,
-  getRegionInfo,
-  regionalClient,
-  type RegionInfo,
-  setRegionInfo,
-} from "../../lib/session";
-import { syncQueue } from "../../lib/sync";
-import type { CardType, EntryRow, Me } from "../../lib/types";
+import { api, ApiError, supabase } from "../../lib/session";
+import { type CardType, type Category, monthOf, type Receipt, type Settings, Store } from "../../lib/store";
 import { CategoryPicker } from "./CategoryPicker";
 import { Cropper } from "./Cropper";
 import { CodeStep, CountryStep, EmailStep } from "./SignIn";
+import { StorageStep } from "./StorageStep";
+
+// v13: receipts live on this phone (one database per account) and in the user's own Google Drive
+// or OneDrive. ClaimTidy's server only knows the account and the subscription.
 
 type Screen =
   | { name: "loading" }
   | { name: "email" }
   | { name: "code"; email: string }
-  | { name: "country"; ticket?: string }
+  | { name: "country" }
+  | { name: "storage" }
   | { name: "home" }
   | { name: "crop"; file: Blob }
   | { name: "categorise"; blob: Blob; contentType: string; previewUrl: string }
-  | { name: "edit"; clientUuid: string; previewUrl: string | null };
+  | { name: "edit"; id: string };
 
-interface Toast {
-  clientUuid: string;
-  text: string;
-}
-
-interface Account {
-  info: RegionInfo;
-  client: SupabaseClient;
+interface Me {
   accountId: string;
+  profile: { country: string; home_currency: string } | null;
 }
 
-const CARD_KEY = "claimtidy.cardType";
+type SyncState = "idle" | "syncing" | "offline" | "reauth";
+
 const meKey = (accountId: string) => `claimtidy.me.${accountId}`;
-const DAY_MS = 24 * 60 * 60 * 1000;
+const PROVIDER_NAME: Record<CloudKind, string> = { google: "Google Drive", microsoft: "OneDrive" };
+
+const needsPush = (r: Receipt) => r.deleted || r.dirty || !r.cloud?.metaId || (!r.cloud.photoId && Boolean(r.data));
 
 export function App() {
   const [screen, setScreen] = useState<Screen>({ name: "loading" });
-  const [account, setAccount] = useState<Account | null>(null);
-  const [me, setMe] = useState<Me | null>(null);
-  const [entries, setEntries] = useState<EntryRow[]>([]);
-  const [queued, setQueued] = useState<QueuedItem[]>([]);
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [pendingSync, setPendingSync] = useState(0);
+  const [syncState, setSyncState] = useState<SyncState>("idle");
   const [online, setOnline] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<Toast | null>(null);
-  const [cardType, setCardType] = useState<CardType>("personal");
+  const [toast, setToast] = useState<{ id: string; text: string } | null>(null);
   const [signingOut, setSigningOut] = useState(false);
-  const syncAbort = useRef<AbortController | null>(null);
-  const syncedIds = useRef(new Map<string, string>());
+  const syncing = useRef<AbortController | null>(null);
+  const syncAgain = useRef(false);
 
-  const openFile = useCallback((file: File) => {
-    setError(null);
-    if (file.type === "application/pdf") {
-      setScreen({ name: "categorise", blob: file, contentType: "application/pdf", previewUrl: "" });
-    } else {
-      setScreen({ name: "crop", file });
+  const withStore = useCallback(async <T,>(id: string, fn: (store: Store) => Promise<T>): Promise<T> => {
+    const store = await Store.open(id);
+    try {
+      return await fn(store);
+    } finally {
+      store.close();
     }
   }, []);
 
-  // ---- Data ------------------------------------------------------------------------------------
-
-  const refreshLists = useCallback(async (acc: Account) => {
-    const queue = await Queue.open(acc.accountId, acc.info.region);
-    setQueued(await queue.list());
-    queue.close();
-    const start = new Date();
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-    const { data } = await acc.client
-      .from("entries")
-      .select("id, client_uuid, created_at, card_type, category_id, image_path")
-      .gte("created_at", start.toISOString())
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (data) setEntries(data as EntryRow[]);
-  }, []);
-
-  const syncNow = useCallback(
-    async (acc: Account) => {
-      if (syncAbort.current) return; // one at a time from this page (the lock covers the worker)
-      const controller = new AbortController();
-      syncAbort.current = controller;
-      try {
-        await syncQueue({
-          accountId: acc.accountId,
-          region: acc.info.region,
-          apiUrl: apiUrl(acc.info.region),
-          supabaseUrl: acc.info.supabaseUrl,
-          signal: controller.signal,
-          accessToken: async () => (await acc.client.auth.getSession()).data.session?.access_token ?? null,
-          onSynced: (clientUuid, id) => syncedIds.current.set(clientUuid, id),
-        });
-      } finally {
-        if (syncAbort.current === controller) syncAbort.current = null;
-        if (!controller.signal.aborted) await refreshLists(acc).catch(() => {});
-      }
+  const refresh = useCallback(
+    async (id: string) => {
+      await withStore(id, async (store) => {
+        const all = await store.all();
+        setReceipts(all.filter((r) => !r.deleted && r.month === monthOf(new Date())));
+        const s = await store.settings();
+        setSettings(s);
+        setPendingSync(s.storage && s.storage !== "device" ? all.filter(needsPush).length : 0);
+      });
     },
-    [refreshLists],
+    [withStore],
   );
 
-  const loadMe = useCallback(async (acc: Account): Promise<Me | null> => {
+  const syncNow = useCallback(
+    async (id: string) => {
+      if (syncing.current) {
+        syncAgain.current = true;
+        return;
+      }
+      const controller = new AbortController();
+      syncing.current = controller;
+      try {
+        do {
+          syncAgain.current = false;
+          const link = await withStore(id, async (store) => (await store.settings()).cloud);
+          if (!link) return;
+          if (!navigator.onLine) {
+            setSyncState("offline");
+            return;
+          }
+          setSyncState("syncing");
+          const result = await withStore(id, async (store) => {
+            const drive = driveFor(link, async (updated) => {
+              await store.updateSettings((s) => {
+                s.cloud = updated;
+              });
+            });
+            const run = () => syncCloud(store, drive, controller.signal);
+            const locks = navigator.locks;
+            return locks ? locks.request(`claimtidy-sync-${id}`, run) : run();
+          });
+          setSyncState(result.stoppedBecause === "reauth" ? "reauth" : result.stoppedBecause === "offline" ? "offline" : "idle");
+        } while (syncAgain.current && !controller.signal.aborted);
+      } catch {
+        setSyncState("offline");
+      } finally {
+        if (syncing.current === controller) syncing.current = null;
+        if (!controller.signal.aborted) await refresh(id).catch(() => {});
+      }
+    },
+    [refresh, withStore],
+  );
+
+  const openFile = useCallback((file: File) => {
+    setError(null);
+    if (file.type === "application/pdf") setScreen({ name: "categorise", blob: file, contentType: "application/pdf", previewUrl: "" });
+    else setScreen({ name: "crop", file });
+  }, []);
+
+  const loadMe = useCallback(async (id: string): Promise<Me | null> => {
     try {
-      const fresh = await api<Me>(acc.client, acc.info.region, "/v1/me");
-      localStorage.setItem(meKey(acc.accountId), JSON.stringify(fresh));
+      const fresh = await api<Me>("/v1/me");
+      localStorage.setItem(meKey(id), JSON.stringify(fresh));
       return fresh;
     } catch (e) {
       if (e instanceof ApiError) throw e;
-      // Offline: use the copy from the last sync so the category buttons still work.
-      const cached = localStorage.getItem(meKey(acc.accountId));
+      // Offline: the copy from the last time we were online.
+      const cached = localStorage.getItem(meKey(id));
       return cached ? (JSON.parse(cached) as Me) : null;
     }
   }, []);
 
-  const enterAccount = useCallback(
-    async (info: RegionInfo) => {
-      const client = regionalClient(info);
-      const { data } = await client.auth.getSession();
-      const session = data.session;
-      if (!session) {
-        setScreen({ name: "email" });
-        return;
-      }
-      const acc: Account = { info, client, accountId: session.user.id };
-      setAccount(acc);
-      const loaded = await loadMe(acc).catch(() => null);
-      setMe(loaded);
-      if (!loaded) {
-        setError("Can't reach ClaimTidy. Check your connection and try again.");
-        setScreen({ name: "email" });
-        return;
-      }
-      if (!loaded.profile) {
-        setScreen({ name: "country" });
-        return;
-      }
-      setScreen({ name: "home" });
-      await refreshLists(acc).catch(() => {});
-      void syncNow(acc);
-      // A receipt shared into the app (Android) goes straight to cropping or categorising.
-      if (new URLSearchParams(location.search).has("shared")) {
-        history.replaceState(null, "", "/");
-        const shared = await takeShared().catch(() => undefined);
-        if (shared) openFile(new File([shared.blob], shared.name, { type: shared.type }));
-      }
-    },
-    [loadMe, refreshLists, syncNow, openFile],
-  );
+  const enterAccount = useCallback(async () => {
+    const { data } = await supabase().auth.getSession();
+    const id = data.session?.user.id;
+    if (!id) {
+      setScreen({ name: "email" });
+      return;
+    }
+    setAccountId(id);
+    const me = await loadMe(id).catch(() => null);
+    if (!me) {
+      setError("Can't reach ClaimTidy. Check your connection and try again.");
+      setScreen({ name: "email" });
+      return;
+    }
+    if (!me.profile) {
+      setScreen({ name: "country" });
+      return;
+    }
 
-  // ---- Boot, connectivity, worker messages ----------------------------------------------------
+    // Back from Google or Microsoft after allowing access.
+    if (location.pathname === "/cloud/callback") {
+      const search = new URLSearchParams(location.search);
+      history.replaceState(null, "", "/");
+      try {
+        const link = await finishLink(search, id);
+        await withStore(id, (store) =>
+          store.updateSettings((s) => {
+            s.storage = link.kind;
+            s.cloud = link;
+            s.settingsDirty = true;
+          }),
+        );
+      } catch (e) {
+        setError((e as Error).message || "Couldn't link your storage. Please try again.");
+        setScreen({ name: "storage" });
+        return;
+      }
+    }
+
+    const s = await withStore(id, (store) => store.settings());
+    if (!s.storage) {
+      setScreen({ name: "storage" });
+      return;
+    }
+    setScreen({ name: "home" });
+    await refresh(id);
+    void syncNow(id);
+    // A receipt shared into the app (Android) goes straight to cropping or categorising.
+    if (new URLSearchParams(location.search).has("shared")) {
+      history.replaceState(null, "", "/");
+      const shared = await takeShared().catch(() => undefined);
+      if (shared) openFile(new File([shared.blob], shared.name, { type: shared.type }));
+    }
+  }, [loadMe, openFile, refresh, syncNow, withStore]);
+
+  // ---- Boot and connectivity ------------------------------------------------------------------
 
   useEffect(() => {
     setOnline(navigator.onLine);
-    try {
-      const saved = localStorage.getItem(CARD_KEY);
-      if (saved === "personal" || saved === "company") setCardType(saved);
-    } catch {
-      // ignore
-    }
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
-    const info = getRegionInfo();
-    if (info) void enterAccount(info);
-    else setScreen({ name: "email" });
+    void enterAccount();
   }, [enterAccount]);
 
   useEffect(() => {
-    if (!account) return;
+    if (!accountId) return;
     const goOnline = () => {
       setOnline(true);
-      void syncNow(account);
+      void syncNow(accountId);
     };
-    const goOffline = () => setOnline(false);
-    const onMessage = (e: MessageEvent) => {
-      if ((e.data as { type?: string })?.type === "claimtidy-sync") void syncNow(account);
+    const goOffline = () => {
+      setOnline(false);
+      setSyncState((s) => (s === "reauth" ? s : "offline"));
     };
     window.addEventListener("online", goOnline);
     window.addEventListener("offline", goOffline);
-    navigator.serviceWorker?.addEventListener("message", onMessage);
-    const timer = setInterval(() => navigator.onLine && void syncNow(account), 30_000);
-
-    // Share the live session with the service worker (Android Background Sync).
-    const { data: sub } = account.client.auth.onAuthStateChange((_event, session) => {
-      if (session && session.user.id === account.accountId) {
-        void saveSession({
-          accountId: account.accountId,
-          region: account.info.region,
-          apiUrl: apiUrl(account.info.region),
-          supabaseUrl: account.info.supabaseUrl,
-          accessToken: session.access_token,
-          expiresAt: session.expires_at ?? 0,
-        });
-      }
-    });
+    const timer = setInterval(() => navigator.onLine && void syncNow(accountId), 60_000);
     return () => {
       window.removeEventListener("online", goOnline);
       window.removeEventListener("offline", goOffline);
-      navigator.serviceWorker?.removeEventListener("message", onMessage);
       clearInterval(timer);
-      sub.subscription.unsubscribe();
     };
-  }, [account, syncNow]);
+  }, [accountId, syncNow]);
 
-  // ---- Sign-in -------------------------------------------------------------------------------
-
-  const signInToRegion = async (info: RegionInfo, tokenHash: string, tokenType: "magiclink" | "signup") => {
-    setRegionInfo(info);
-    const client = regionalClient(info);
-    const { error: otpError } = await client.auth.verifyOtp({ token_hash: tokenHash, type: tokenType === "signup" ? "signup" : "magiclink" });
-    if (otpError) throw new Error(otpError.message);
-  };
+  // ---- Sign-in (Supabase email code) ----------------------------------------------------------
 
   const onEmail = async (email: string) => {
     setBusy(true);
     setError(null);
-    try {
-      const res = await directory("/v1/email/start", { email });
-      if (res.status !== 202) throw new Error();
-      setScreen({ name: "code", email });
-    } catch {
-      setError("Couldn't send the code. Check the address and your connection.");
-    } finally {
-      setBusy(false);
-    }
+    const { error: e } = await supabase().auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    setBusy(false);
+    if (e) setError("Couldn't send the code. Check the address and your connection.");
+    else setScreen({ name: "code", email });
   };
 
   const onCode = async (email: string, code: string) => {
     setBusy(true);
     setError(null);
-    try {
-      const res = await directory<{ status?: string; ticket?: string; tokenHash?: string; tokenType?: "magiclink" | "signup" } & RegionInfo>(
-        "/v1/email/verify",
-        { email, code },
-      );
-      if (res.status === 400) {
-        setError("That code isn't right, or it has expired.");
-        return;
-      }
-      if (res.json.status === "new") {
-        setScreen({ name: "country", ticket: res.json.ticket! });
-        return;
-      }
-      await signInToRegion(res.json, res.json.tokenHash!, res.json.tokenType!);
-      await enterAccount(res.json);
-    } catch {
-      setError("Sign-in failed. Please try again.");
-    } finally {
-      setBusy(false);
-    }
+    const { error: e } = await supabase().auth.verifyOtp({ email, token: code, type: "email" });
+    setBusy(false);
+    if (e) setError("That code isn't right, or it has expired.");
+    else await enterAccount();
   };
 
-  const onCountry = async (country: string, currency: string, ticket?: string) => {
+  const onCountry = async (country: string, currency: string) => {
     setBusy(true);
     setError(null);
     try {
-      let info = getRegionInfo();
-      if (ticket) {
-        const res = await directory<RegionInfo & { tokenHash: string; tokenType: "magiclink" | "signup" }>("/v1/reserve", {
-          ticket,
-          country,
-          homeCurrency: currency,
-        });
-        if (res.status !== 200) throw new Error("reserve");
-        await signInToRegion(res.json, res.json.tokenHash, res.json.tokenType);
-        info = res.json;
-      }
-      if (!info) throw new Error("no region");
-      const client = regionalClient(info);
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      try {
-        await api(client, info.region, "/v1/profile", { method: "POST", body: { country, homeCurrency: currency, timeZone } });
-      } catch (e) {
-        if (e instanceof ApiError && e.code === "wrong_region") {
-          setError("Your account is stored in another region. Please choose a country in that region.");
-          return;
-        }
-        throw e;
-      }
-      await enterAccount(info);
+      await api("/v1/profile", { method: "POST", body: { country, homeCurrency: currency, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+      await enterAccount();
     } catch {
       setError("Couldn't finish setting up. Please try again.");
     } finally {
@@ -296,128 +250,122 @@ export function App() {
     }
   };
 
-  // ---- Capture -------------------------------------------------------------------------------
-
-  const onFile = (file: File | undefined) => {
-    if (file) openFile(file);
+  const onStorage = async (choice: CloudKind | "device") => {
+    if (!accountId) return;
+    setError(null);
+    if (choice === "device") {
+      await withStore(accountId, (store) =>
+        store.updateSettings((s) => {
+          s.storage = "device";
+        }),
+      );
+      setScreen({ name: "home" });
+      await refresh(accountId);
+      return;
+    }
+    setBusy(true);
+    await startLink(choice, accountId); // leaves the page for Google or Microsoft
   };
 
+  // ---- Capture, undo, edit ---------------------------------------------------------------------
+
   const onPick = async (blob: Blob, contentType: string, categoryId: string) => {
-    if (!account) return;
-    const item: QueuedItem = {
-      clientUuid: crypto.randomUUID(),
-      accountId: account.accountId,
-      region: account.info.region,
-      createdAt: new Date().toISOString(),
+    if (!accountId || !settings) return;
+    const now = new Date();
+    const receipt: Receipt = {
+      id: crypto.randomUUID(),
+      accountId,
+      createdAt: now.toISOString(),
+      month: monthOf(now),
       kind: "receipt",
-      cardType,
+      cardType: settings.defaultCard,
       categoryId,
       contentType,
       data: await blob.arrayBuffer(),
     };
-    const queue = await Queue.open(account.accountId, account.info.region);
-    await queue.add(item);
-    queue.close();
+    await withStore(accountId, (store) => store.put(receipt));
     void navigator.storage?.persist?.();
-    const category = me?.categories.find((c) => c.id === categoryId)?.name ?? "Receipt";
-    setToast({ clientUuid: item.clientUuid, text: `Saved to ${category}` });
+    const name = settings.categories.find((c) => c.id === categoryId)?.name ?? "Receipt";
+    setToast({ id: receipt.id, text: `Saved to ${name}` });
     setScreen({ name: "home" });
-    await refreshLists(account);
-    const reg = await navigator.serviceWorker?.ready.catch(() => undefined);
-    await (reg as (ServiceWorkerRegistration & { sync?: { register(tag: string): Promise<void> } }) | undefined)?.sync
-      ?.register("claimtidy-sync")
-      .catch(() => {});
-    if (navigator.onLine) void syncNow(account);
+    await refresh(accountId);
+    void syncNow(accountId);
   };
 
-  const entryIdFor = async (acc: Account, clientUuid: string): Promise<string | null> => {
-    const known = syncedIds.current.get(clientUuid);
-    if (known) return known;
-    const { data } = await acc.client.from("entries").select("id").eq("client_uuid", clientUuid).maybeSingle();
-    return (data as { id: string } | null)?.id ?? null;
-  };
-
-  const undo = async (clientUuid: string) => {
-    if (!account) return;
+  const undo = async (id: string) => {
+    if (!accountId) return;
     setToast(null);
-    // Stop an upload in flight so it can't land after the undo.
-    syncAbort.current?.abort();
-    syncAbort.current = null;
-    const queue = await Queue.open(account.accountId, account.info.region);
-    const stillQueued = await queue.get(clientUuid);
-    if (stillQueued) await queue.remove(clientUuid);
-    queue.close();
-    const id = await entryIdFor(account, clientUuid);
-    if (id) await api(account.client, account.info.region, `/v1/entries/${id}`, { method: "DELETE" }).catch(() => {});
-    await refreshLists(account);
-    void syncNow(account);
+    await withStore(accountId, async (store) => {
+      const r = await store.get(id);
+      if (!r) return;
+      // Never reached the cloud: just forget it. Otherwise delete it there too at the next sync.
+      if (!r.cloud?.metaId && !r.cloud?.photoId) await store.purge(id);
+      else await store.put({ ...r, deleted: true });
+    });
+    await refresh(accountId);
+    void syncNow(accountId);
   };
 
-  const applyEdit = async (clientUuid: string, categoryId: string) => {
-    if (!account) return;
-    const queue = await Queue.open(account.accountId, account.info.region);
-    const item = await queue.get(clientUuid);
-    if (item) {
-      item.categoryId = categoryId;
-      item.cardType = cardType;
-      delete item.error;
-      await queue.put(item);
-    }
-    queue.close();
-    if (!item) {
-      const id = await entryIdFor(account, clientUuid);
-      if (id) await api(account.client, account.info.region, `/v1/entries/${id}`, { method: "PATCH", body: { categoryId, cardType } });
-    }
+  const applyEdit = async (id: string, categoryId: string) => {
+    if (!accountId || !settings) return;
+    await withStore(accountId, async (store) => {
+      const r = await store.get(id);
+      if (r) await store.put({ ...r, categoryId, cardType: settings.defaultCard, dirty: true });
+    });
     setScreen({ name: "home" });
-    await refreshLists(account);
-    void syncNow(account);
+    await refresh(accountId);
+    void syncNow(accountId);
   };
 
-  // ---- Sign-out ------------------------------------------------------------------------------
+  const rememberCard = async (card: CardType) => {
+    if (!accountId) return;
+    const s = await withStore(accountId, (store) =>
+      store.updateSettings((x) => {
+        x.defaultCard = card;
+        x.settingsDirty = true;
+      }),
+    );
+    setSettings(s);
+  };
 
-  const signOut = async (deleteUnsynced: boolean) => {
-    if (!account) return;
-    syncAbort.current?.abort();
-    syncAbort.current = null;
-    // Forget the account on this device first, synchronously, so even closing the app mid sign-out
-    // can't reopen it signed in. Only its unsynced captures stay, in its own database.
-    clearRegionInfo();
-    forgetClient(account.info.region);
-    localStorage.removeItem(meKey(account.accountId));
-    syncedIds.current.clear();
-    setAccount(null);
-    setMe(null);
-    setEntries([]);
-    setQueued([]);
+  // ---- Sign-out --------------------------------------------------------------------------------
+
+  const signOut = async () => {
+    if (!accountId) return;
+    syncing.current?.abort();
+    syncing.current = null;
+    // Forget the account in this browser first, synchronously. Its receipts stay in its own
+    // database on this phone (for "this phone only" they're the only copy), unseen by anyone else.
+    localStorage.removeItem(meKey(accountId));
+    setAccountId(null);
+    setSettings(null);
+    setReceipts([]);
+    setPendingSync(0);
     setToast(null);
     setSigningOut(false);
+    setSyncState("idle");
     setScreen({ name: "email" });
-
-    if (deleteUnsynced) {
-      const queue = await Queue.open(account.accountId, account.info.region);
-      for (const item of await queue.list()) await queue.remove(item.clientUuid);
-      queue.close();
-    }
-    // Stop the service worker acting for this account, and end the session at the server.
-    // Neither may hold the user on this screen.
-    const limit = () => new Promise((r) => setTimeout(r, 3000));
-    await Promise.race([clearSession().catch(() => {}), limit()]);
-    await Promise.race([account.client.auth.signOut({ scope: "local" }).catch(() => {}), limit()]);
-  };
-
-  // ---- Render --------------------------------------------------------------------------------
-
-  const categories = useMemo(() => me?.categories ?? [], [me]);
-  const categoryName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? "Uncategorised";
-  const pending = queued.filter((q) => !q.error);
-  const stale = pending.some((q) => Date.now() - Date.parse(q.createdAt) > DAY_MS);
-  const rememberCard = (type: CardType) => {
-    setCardType(type);
     try {
-      localStorage.setItem(CARD_KEY, type);
+      localStorage.removeItem("claimtidy-auth");
     } catch {
       // ignore
     }
+    await Promise.race([supabase().auth.signOut({ scope: "local" }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+  };
+
+  // ---- Render ----------------------------------------------------------------------------------
+
+  const categories: Category[] = settings?.categories ?? [];
+  const categoryName = (id: string | null) => categories.find((c) => c.id === id)?.name ?? "Uncategorised";
+  const storage = settings?.storage;
+  const cloudName = storage && storage !== "device" ? PROVIDER_NAME[storage] : null;
+
+  const status = () => {
+    if (!cloudName) return { text: "Saved on this phone", tone: "ok" };
+    if (syncState === "reauth") return { text: `Reconnect ${cloudName}`, tone: "warn" };
+    if (!online || syncState === "offline") return { text: `Offline · ${pendingSync} to sync`, tone: "warn" };
+    if (pendingSync > 0) return { text: `${pendingSync} to sync`, tone: "busy" };
+    return { text: `Synced to ${cloudName}`, tone: "ok" };
   };
 
   switch (screen.name) {
@@ -428,7 +376,9 @@ export function App() {
     case "code":
       return <CodeStep email={screen.email} onSubmit={(code) => onCode(screen.email, code)} onBack={() => setScreen({ name: "email" })} busy={busy} error={error} />;
     case "country":
-      return <CountryStep onChoose={(country, currency) => onCountry(country, currency, screen.ticket)} busy={busy} error={error} />;
+      return <CountryStep onChoose={onCountry} busy={busy} error={error} />;
+    case "storage":
+      return <StorageStep onChoose={onStorage} busy={busy} error={error} />;
     case "crop":
       return (
         <Cropper
@@ -443,7 +393,7 @@ export function App() {
           title="Which category?"
           previewUrl={screen.previewUrl || null}
           categories={categories}
-          cardType={cardType}
+          cardType={settings?.defaultCard ?? "personal"}
           onCardType={rememberCard}
           onPick={(id) => {
             if (screen.previewUrl) URL.revokeObjectURL(screen.previewUrl);
@@ -456,72 +406,70 @@ export function App() {
       return (
         <CategoryPicker
           title="Change category"
-          previewUrl={screen.previewUrl}
+          previewUrl={null}
           categories={categories}
-          cardType={cardType}
+          cardType={settings?.defaultCard ?? "personal"}
           onCardType={rememberCard}
-          onPick={(id) => void applyEdit(screen.clientUuid, id)}
+          onPick={(id) => void applyEdit(screen.id, id)}
           onCancel={() => setScreen({ name: "home" })}
         />
       );
-    case "home":
+    case "home": {
+      const st = status();
       return (
         <div className="screen home">
           <header className="topbar">
             <span className="brand-sm">ClaimTidy</span>
-            <span className={`pill ${!online ? "warn" : pending.length ? "busy" : "ok"}`} data-testid="sync-status">
-              {!online ? `Offline · ${pending.length} waiting` : pending.length ? `${pending.length} uploading` : "All synced"}
-            </span>
-            <button className="link" onClick={() => (queued.length ? setSigningOut(true) : void signOut(false))}>
+            {syncState === "reauth" && storage && storage !== "device" ? (
+              <button className="pill warn" data-testid="sync-status" onClick={() => accountId && void startLink(storage, accountId)}>
+                {st.text}
+              </button>
+            ) : (
+              <span className={`pill ${st.tone}`} data-testid="sync-status">
+                {st.text}
+              </span>
+            )}
+            <button className="link" onClick={() => (pendingSync > 0 || storage === "device" ? setSigningOut(true) : void signOut())}>
               Sign out
             </button>
           </header>
 
           <label className="capture primary">
             Snap receipt
-            <input type="file" accept="image/*" capture="environment" hidden data-testid="snap" onChange={(e) => onFile(e.target.files?.[0])} />
+            <input type="file" accept="image/*" capture="environment" hidden data-testid="snap" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} />
           </label>
           <label className="capture secondary">
             Pick from Photos or Files
-            <input type="file" accept="image/*,application/pdf" hidden data-testid="pick" onChange={(e) => onFile(e.target.files?.[0])} />
+            <input type="file" accept="image/*,application/pdf" hidden data-testid="pick" onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])} />
           </label>
-
-          {stale && <p className="warn-box">Some receipts have waited over a day to upload. Open ClaimTidy while you&apos;re online so they don&apos;t get lost.</p>}
 
           <h2>This month</h2>
           <ul className="entries" data-testid="entries">
-            {queued.map((q) => (
-              <li key={q.clientUuid} data-testid="entry" data-pending="true">
-                <span>{categoryName(q.categoryId)}</span>
-                <span className="meta">{q.cardType === "company" ? "Company card" : "Personal card"}</span>
-                <span className={`badge ${q.error ? "error" : ""}`}>{q.error ? "Needs a check" : "Pending sync"}</span>
-              </li>
-            ))}
-            {entries.map((e) => (
-              <li key={e.id} data-testid="entry" data-pending="false">
-                <span>{categoryName(e.category_id)}</span>
+            {receipts.map((r) => (
+              <li key={r.id} data-testid="entry" data-pending={cloudName && needsPush(r) ? "true" : "false"}>
+                <span>{categoryName(r.categoryId)}</span>
                 <span className="meta">
-                  {e.card_type === "company" ? "Company card" : "Personal card"} · {new Date(e.created_at).toLocaleDateString()}
+                  {r.cardType === "company" ? "Company card" : "Personal card"} · {new Date(r.createdAt).toLocaleDateString()}
                 </span>
-                <button className="link" onClick={() => setScreen({ name: "edit", clientUuid: e.client_uuid, previewUrl: null })}>
+                <button className="link" onClick={() => setScreen({ name: "edit", id: r.id })}>
                   Edit
                 </button>
               </li>
             ))}
-            {queued.length === 0 && entries.length === 0 && <li className="empty">No receipts yet this month.</li>}
+            {receipts.length === 0 && <li className="empty">No receipts yet this month.</li>}
           </ul>
 
           {toast && (
             <div className="toast" role="status">
               <span>{toast.text}</span>
-              <button className="link" onClick={() => void undo(toast.clientUuid)}>
+              <button className="link" onClick={() => void undo(toast.id)}>
                 Undo
               </button>
               <button
                 className="link"
                 onClick={() => {
                   setToast(null);
-                  setScreen({ name: "edit", clientUuid: toast.clientUuid, previewUrl: null });
+                  setScreen({ name: "edit", id: toast.id });
                 }}
               >
                 Edit
@@ -532,14 +480,12 @@ export function App() {
           {signingOut && (
             <div className="dialog" role="dialog" aria-modal="true">
               <p>
-                {queued.length} receipt{queued.length === 1 ? " hasn't" : "s haven't"} uploaded yet. They&apos;ll stay on this device and upload next time you sign in, or you can
-                delete them now.
+                {storage === "device"
+                  ? "Your receipts are kept only on this phone. They'll stay here, private to your account, for when you sign in again."
+                  : `${pendingSync} receipt${pendingSync === 1 ? " hasn't" : "s haven't"} reached ${cloudName} yet. They'll stay on this phone and sync next time you sign in.`}
               </p>
-              <button className="primary" onClick={() => void signOut(false)}>
-                Keep them and sign out
-              </button>
-              <button className="secondary danger" onClick={() => void signOut(true)}>
-                Delete them and sign out
+              <button className="primary" onClick={() => void signOut()}>
+                Sign out
               </button>
               <button className="link" onClick={() => setSigningOut(false)}>
                 Cancel
@@ -549,5 +495,6 @@ export function App() {
           {error && <p className="error">{error}</p>}
         </div>
       );
+    }
   }
 }

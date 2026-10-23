@@ -1,6 +1,6 @@
 "use client";
 
-import type { CardType, Category } from "../../lib/types";
+import type { CardType, Category } from "../../lib/store";
 
 interface Props {
   title: string;

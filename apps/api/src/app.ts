@@ -3,14 +3,17 @@ import { z } from "zod";
 import { AuthError, createAuthenticator, type Session } from "./auth.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
+import { registerCloudRoutes } from "./cloud.js";
 import { HttpError, registerRoutes } from "./routes.js";
 
 export interface Deps {
   config: Config;
   db?: Db;
+  /** Test seam for the Google/Microsoft token endpoints. */
+  fetchProvider?: typeof fetch;
 }
 
-export function buildApp({ config, db }: Deps): FastifyInstance {
+export function buildApp({ config, db, fetchProvider }: Deps): FastifyInstance {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test", bodyLimit: 256 * 1024 });
 
   // Cross-origin rule: only the app's own origin may call this API.
@@ -37,6 +40,7 @@ export function buildApp({ config, db }: Deps): FastifyInstance {
     const session = (request: { headers: { authorization?: string | undefined } }): Promise<Session> =>
       authenticate(request.headers.authorization);
     registerRoutes(app, { db, session });
+    registerCloudRoutes(app, config, session, fetchProvider);
   }
 
   app.setErrorHandler((error, _request, reply) => {

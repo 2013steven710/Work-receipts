@@ -80,3 +80,68 @@ describe("account API", () => {
     expect(res.statusCode).toBe(403);
   });
 });
+
+describe("linking the user's own Drive (token exchange only)", () => {
+  const received: URLSearchParams[] = [];
+  const fakeProvider = (async (_url: string, init?: RequestInit) => {
+    const form = new URLSearchParams(String(init?.body));
+    received.push(form);
+    if (form.get("refresh_token") === "revoked") return Response.json({ error: "invalid_grant" }, { status: 400 });
+    return Response.json({ access_token: "at-1", expires_in: 3599, refresh_token: form.get("grant_type") === "authorization_code" ? "rt-1" : undefined });
+  }) as typeof fetch;
+
+  const linked = () =>
+    buildApp({
+      config: loadConfig({
+        APP_ORIGIN: "http://localhost:3000",
+        SUPABASE_URL,
+        DATABASE_URL: DB_URL,
+        GOOGLE_CLIENT_ID: "gid",
+        GOOGLE_CLIENT_SECRET: "gsecret",
+      }),
+      db,
+      fetchProvider: fakeProvider,
+    });
+
+  it("exchanges a code with the app's secret and stores nothing", async () => {
+    const api = linked();
+    const before = await db.query("select count(*)::int as n from audit_log");
+    const res = await api.inject({
+      method: "POST",
+      url: "/v1/cloud/google/exchange",
+      headers: { authorization: `Bearer ${tokens.a}` },
+      payload: { code: "c-1", codeVerifier: "v".repeat(43), redirectUri: "http://localhost:3000/cloud/callback" },
+    });
+    expect(res.json()).toEqual({ accessToken: "at-1", expiresIn: 3599, refreshToken: "rt-1" });
+    expect(received.at(-1)?.get("client_secret")).toBe("gsecret");
+    expect(received.at(-1)?.get("code_verifier")).toBe("v".repeat(43));
+    const after = await db.query("select count(*)::int as n from audit_log");
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+    await api.close();
+  });
+
+  it("refreshes, and asks the user to reconnect when access was revoked", async () => {
+    const api = linked();
+    const ok = await api.inject({ method: "POST", url: "/v1/cloud/google/refresh", headers: { authorization: `Bearer ${tokens.a}` }, payload: { refreshToken: "rt-1" } });
+    expect(ok.json()).toEqual({ accessToken: "at-1", expiresIn: 3599 });
+    const revoked = await api.inject({ method: "POST", url: "/v1/cloud/google/refresh", headers: { authorization: `Bearer ${tokens.a}` }, payload: { refreshToken: "revoked" } });
+    expect(revoked.json()).toEqual({ error: "cloud_reauth" });
+    await api.close();
+  });
+
+  it("refuses without a session, a foreign redirect, or an unconfigured provider", async () => {
+    const api = linked();
+    expect((await api.inject({ method: "POST", url: "/v1/cloud/google/refresh", payload: { refreshToken: "x" } })).statusCode).toBe(401);
+    const foreign = await api.inject({
+      method: "POST",
+      url: "/v1/cloud/google/exchange",
+      headers: { authorization: `Bearer ${tokens.a}` },
+      payload: { code: "c", codeVerifier: "v".repeat(43), redirectUri: "https://evil.example/cb" },
+    });
+    expect(foreign.json()).toEqual({ error: "bad_redirect" });
+    const ms = await api.inject({ method: "POST", url: "/v1/cloud/microsoft/refresh", headers: { authorization: `Bearer ${tokens.a}` }, payload: { refreshToken: "x" } });
+    expect(ms.json()).toEqual({ error: "cloud_not_configured" });
+    expect((await api.inject({ method: "GET", url: "/v1/cloud/providers" })).json()).toEqual({ google: true, microsoft: false });
+    await api.close();
+  });
+});

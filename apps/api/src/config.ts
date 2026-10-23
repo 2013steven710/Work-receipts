@@ -12,6 +12,14 @@ const ConfigSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(32).optional(),
   // The token issuer, when the API reaches Supabase on an internal address (self-hosted).
   SUPABASE_JWT_ISSUER: z.url().optional(),
+  // Linking the user's own Google Drive / OneDrive (v13). The API only exchanges and refreshes
+  // tokens with the app's secret; it never stores them. Unset = that provider is unavailable.
+  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_TOKEN_URL: z.url().default("https://oauth2.googleapis.com/token"),
+  MICROSOFT_CLIENT_ID: z.string().min(1).optional(),
+  MICROSOFT_CLIENT_SECRET: z.string().min(1).optional(),
+  MICROSOFT_TOKEN_URL: z.url().default("https://login.microsoftonline.com/common/oauth2/v2.0/token"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
